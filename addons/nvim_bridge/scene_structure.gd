@@ -40,10 +40,26 @@ static func _path_target(source: Node, path: NodePath) -> Node:
 	return source.get_node_or_null(NodePath(path.get_concatenated_names())) if path.get_name_count() else source
 
 
+static func _ambiguous_path(path: NodePath) -> bool:
+	if path.is_absolute():
+		return true
+	# A walk that turns back after descending can cross the edited branch
+	# even if its endpoint is outside that branch. Leading '..' is fine.
+	var descended := false
+	for index in path.get_name_count():
+		var segment := path.get_name(index)
+		if segment == &"..":
+			if descended:
+				return true
+		elif segment != &".":
+			descended = true
+	return false
+
+
 static func _unsafe_path(edited: Node, source: Node, path: NodePath) -> bool:
 	if path.is_empty():
 		return false
-	if path.is_absolute():
+	if _ambiguous_path(path):
 		return true
 	var target := _path_target(source, path)
 	return target == null or _touches(edited, source) or _touches(edited, target)
@@ -89,7 +105,7 @@ static func _unsafe_animation(edited: Node, mixer: AnimationMixer) -> bool:
 	for animation_name in mixer.get_animation_list():
 		var animation := mixer.get_animation(animation_name)
 		for index in animation.get_track_count():
-			if base == null or _unsafe_path(edited, base, animation.track_get_path(index)):
+			if base == null or _ambiguous_path(mixer.root_node) or _unsafe_path(edited, base, animation.track_get_path(index)):
 				return true
 	return false
 
@@ -134,6 +150,10 @@ static func prepare(root: Node, method: String, p: Dictionary) -> Dictionary:
 			label = p.name
 			if label.strip_edges().is_empty() or label != label.validate_node_name() or label in [".", ".."]:
 				return _error("Invalid node name.")
+			if node.unique_name_in_owner and node.owner != null:
+				var claimed := node.owner.get_node_or_null(NodePath("%" + label))
+				if claimed != null and claimed != node and claimed.owner == node.owner:
+					return _error("Another node already has that unique name in the scene.")
 		"reparent_node":
 			parent = _resolve(root, p.get("parent"))
 			if parent == null:

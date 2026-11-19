@@ -99,6 +99,18 @@ func _run() -> void:
 	await reject("delete_node", {"node": TARGET}, "inherited", "res://inherited.tscn")
 	await reject("delete_node", {"node": "Target"}, "reference", "res://references.tscn")
 	await request("scene_tree", {})
+	var existing := root.get_node("Right/Existing")
+	target.unique_name_in_owner = true
+	existing.unique_name_in_owner = true
+	await reject("rename_node", {"node": TARGET, "name": "Existing"}, "unique name")
+	check(root.get_node_or_null("%Target") == target and root.get_node_or_null("%Existing") == existing, "both unique names still resolve")
+	target.unique_name_in_owner = false
+	existing.unique_name_in_owner = false
+	var path := NodePath("Left/Target/../Sibling")
+	check(root.get_node_or_null(path) == root.get_node("Left/Sibling"), "path traverses target and resolves to sibling")
+	root.set_meta("traversal_reference", path)
+	await reject("rename_node", {"node": TARGET, "name": "Renamed"}, "serialized reference")
+	root.remove_meta("traversal_reference")
 	var left := root.get_node("Left")
 	left.set_meta("nested_reference", [{"target": target}])
 	await reject("delete_node", {"node": TARGET}, "serialized reference")
