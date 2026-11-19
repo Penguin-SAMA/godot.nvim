@@ -58,37 +58,42 @@ static func _unsafe_path(edited: Node, source: Node, path: NodePath) -> bool:
 	return false
 
 
-static func _unsafe_value(edited: Node, source: Node, value: Variant, seen: Array) -> bool:
+static func _unsafe_value(edited: Node, source: Node, value: Variant, seen: Array, unknown_context := false) -> bool:
 	if value is NodePath:
-		return _unsafe_path(edited, source, value)
+		return not value.is_empty() if unknown_context else _unsafe_path(edited, source, value)
 	if value is Node:
-		return _touches(edited, source) or _touches(edited, value)
+		return unknown_context or _touches(edited, source) or _touches(edited, value)
 	if not (value is Array or value is Dictionary or value is Resource):
 		return false
 	# PackedScenes are independent hierarchies; Script contents are not scanned.
 	if value is Script or value is PackedScene:
 		return false
-	for item in seen:
-		if is_same(item, value):
+	for entry in seen:
+		if entry[0] == unknown_context and is_same(entry[1], value):
 			return false
-	seen.append(value)
+	seen.append([unknown_context, value])
 	if value is Array or value is Dictionary:
 		for item in value:
-			if _unsafe_value(edited, source, item, seen):
+			if _unsafe_value(edited, source, item, seen, unknown_context):
 				return true
-			if value is Dictionary and _unsafe_value(edited, source, value[item], seen):
+			if value is Dictionary and _unsafe_value(edited, source, value[item], seen, unknown_context):
 				return true
 		return false
-	# Track paths have their own base, handled on the owning AnimationMixer.
 	if value is Animation:
+		# Track paths have a mixer-relative base. Key data does not: a key can
+		# assign a path or pass it to arbitrary code on a different node.
+		for track in value.get_track_count():
+			for key in value.track_get_key_count(track):
+				if _unsafe_value(edited, source, value.track_get_key_value(track, key), seen, true):
+					return true
 		return false
-	return _unsafe_properties(edited, source, value, seen)
+	return _unsafe_properties(edited, source, value, seen, unknown_context)
 
 
-static func _unsafe_properties(edited: Node, source: Node, object: Object, seen: Array) -> bool:
+static func _unsafe_properties(edited: Node, source: Node, object: Object, seen: Array, unknown_context := false) -> bool:
 	for property in object.get_property_list():
 		if property.usage & PROPERTY_USAGE_STORAGE:
-			if _unsafe_value(edited, source, object.get(property.name), seen):
+			if _unsafe_value(edited, source, object.get(property.name), seen, unknown_context):
 				return true
 	return false
 
