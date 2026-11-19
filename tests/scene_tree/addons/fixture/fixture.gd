@@ -111,6 +111,13 @@ func _run() -> void:
 	root.set_meta("traversal_reference", path)
 	await reject("rename_node", {"node": TARGET, "name": "Renamed"}, "serialized reference")
 	root.remove_meta("traversal_reference")
+	existing.unique_name_in_owner = true
+	var alias_path := NodePath("Left/Target/%Existing")
+	check(root.get_node_or_null(alias_path) == existing, "path traverses target and resolves external unique alias")
+	root.set_meta("alias_reference", alias_path)
+	await reject("rename_node", {"node": TARGET, "name": "Renamed"}, "serialized reference")
+	root.remove_meta("alias_reference")
+	existing.unique_name_in_owner = false
 	var left := root.get_node("Left")
 	left.set_meta("nested_reference", [{"target": target}])
 	await reject("delete_node", {"node": TARGET}, "serialized reference")

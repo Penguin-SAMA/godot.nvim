@@ -40,29 +40,22 @@ static func _path_target(source: Node, path: NodePath) -> Node:
 	return source.get_node_or_null(NodePath(path.get_concatenated_names())) if path.get_name_count() else source
 
 
-static func _ambiguous_path(path: NodePath) -> bool:
-	if path.is_absolute():
-		return true
-	# A walk that turns back after descending can cross the edited branch
-	# even if its endpoint is outside that branch. Leading '..' is fine.
-	var descended := false
-	for index in path.get_name_count():
-		var segment := path.get_name(index)
-		if segment == &"..":
-			if descended:
-				return true
-		elif segment != &".":
-			descended = true
-	return false
-
-
 static func _unsafe_path(edited: Node, source: Node, path: NodePath) -> bool:
 	if path.is_empty():
 		return false
-	if _ambiguous_path(path):
+	if path.is_absolute() or _touches(edited, source):
 		return true
-	var target := _path_target(source, path)
-	return target == null or _touches(edited, source) or _touches(edited, target)
+	# Resolve each cumulative prefix with Godot's resolver: '..' and '%Name'
+	# can leave the edited branch even when the endpoint is unaffected.
+	var prefix := ""
+	for index in path.get_name_count():
+		if index > 0:
+			prefix += "/"
+		prefix += String(path.get_name(index))
+		var step := source.get_node_or_null(NodePath(prefix))
+		if step == null or _touches(edited, step):
+			return true
+	return false
 
 
 static func _unsafe_value(edited: Node, source: Node, value: Variant, seen: Array) -> bool:
@@ -105,7 +98,7 @@ static func _unsafe_animation(edited: Node, mixer: AnimationMixer) -> bool:
 	for animation_name in mixer.get_animation_list():
 		var animation := mixer.get_animation(animation_name)
 		for index in animation.get_track_count():
-			if base == null or _ambiguous_path(mixer.root_node) or _unsafe_path(edited, base, animation.track_get_path(index)):
+			if base == null or _unsafe_path(edited, mixer, mixer.root_node) or _unsafe_path(edited, base, animation.track_get_path(index)):
 				return true
 	return false
 
