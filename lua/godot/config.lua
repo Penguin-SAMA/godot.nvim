@@ -5,6 +5,7 @@ local defaults = {
   gdscript_formatter = "gdscript-formatter",
   clang_format = "clang-format",
   scene_icons = "nerd",
+  toolbar = true,
   state_dir = vim.fn.stdpath("state") .. "/godot.nvim",
   startup_timeout = 45000,
 }

@@ -54,6 +54,7 @@ local function stop(c, err)
   if c.dead then return end
   c.dead = true
   if clients[c.key] == c then clients[c.key] = nil end
+  if c.run_controls then vim.cmd.redrawtabline(); vim.cmd.redrawstatus() end
   if not c.socket:is_closing() then c.socket:close() end
   for id, cb in pairs(c.pending) do
     c.pending[id] = nil
@@ -76,8 +77,20 @@ local function send(c, method, params, callback)
   end, 15000)
 end
 
+local function update_run_state(c, state)
+  if type(state) == "table" then
+    c.run_state = state
+    vim.cmd.redrawtabline()
+    vim.cmd.redrawstatus()
+  end
+end
+
 local function receive(c, msg)
   if type(msg) ~= "table" then return stop(c, "Invalid bridge response") end
+  if msg.event == "run_state" and c.ready and c.run_controls then
+    update_run_state(c, msg.data)
+    return
+  end
   if msg.event == "open_file" and c.ready and type(msg.data) == "table" then
     local file = file_name(c.root, msg.data.path)
     if file then
@@ -124,12 +137,13 @@ local function connect(s, token, callback)
       end
       if #c.bytes > 16 * 1024 * 1024 then stop(c, "Godot bridge response is too large") end
     end))
-    send(c, "hello", { token = token }, function(why, hello)
+    send(c, "hello", { token = token, watch_run = s.mode == "editor" }, function(why, hello)
       if why or type(hello) ~= "table" or type(hello.root) ~= "string"
           or project.key(hello.root) ~= key or hello.pid ~= s.pid or hello.mode ~= s.mode then
         return stop(c, why or "Godot bridge project identity did not match")
       end
       c.ready = true
+      c.run_controls = hello.run_controls == true
       local waiting = c.waiting
       c.waiting = {}
       for _, cb in ipairs(waiting) do cb(nil, c) end
@@ -142,10 +156,19 @@ function M.connected(root)
   return c ~= nil and c.ready == true
 end
 
+function M.run_state(key)
+  local c = clients[key]
+  return c and c.run_state
+end
+
 local function request(c, method, params, callback)
+  if method == "run_action" and not c.run_controls then
+    return callback("Update the project bridge with :GodotBridgeInstall, then reopen its Godot editor.")
+  end
   params = vim.deepcopy(params or {})
   if changing[method] then params.modified = modified(c.root) end
   send(c, method, next(params) and params or vim.empty_dict(), function(err, result)
+    if not err and method == "run_action" then update_run_state(c, result) end
     if not err and changing[method] then
       for _, buf in ipairs(vim.api.nvim_list_bufs()) do
         if vim.api.nvim_buf_is_loaded(buf) and not vim.bo[buf].modified and vim.bo[buf].buftype == "" then
@@ -208,6 +231,10 @@ end
 
 function M.call(root, method, params, callback)
   callback = callback or function(err) if err then report(err) end end
+  local client = clients[project.key(root)]
+  if method == "run_action" and client and client.ready and client.run_controls then
+    return request(client, method, params, callback)
+  end
   if not uv.fs_stat(root .. "/addons/nvim_bridge/plugin.cfg") then
     return callback("Install the project bridge with :GodotBridgeInstall first.")
   end

@@ -30,6 +30,8 @@ SHA256 = "a18ce0ccec3ecc40b0dd6c4f5132ca934e9fb7c2979717940ff32aee1eb35481"
 NS = "{http://www.w3.org/2000/svg}"
 EM, ASCENT = 1024, 832
 FIRST_CODEPOINT = 0xF4000
+TOOLBAR_ICONS = ("MainPlay", "Pause", "Stop", "PlayScene", "PlayCustom", "Reload")
+TOOLBAR_FIRST = 0xF4100
 
 
 def source_data(data):
@@ -195,8 +197,10 @@ def build(icons, mapping, saturation):
     glyphs = {".notdef": TTGlyphPen(None).glyph()}
     cmap, layers, palette, shape_cache = {}, {}, {}, {}
     codepoints = {}
-    for index, name in enumerate(sorted(set(mapping.values()))):
-        codepoint = FIRST_CODEPOINT + index
+    scene_icons = sorted(set(mapping.values()))
+    assigned = [(name, FIRST_CODEPOINT + i) for i, name in enumerate(scene_icons)]
+    assigned.extend((name, TOOLBAR_FIRST + i) for i, name in enumerate(TOOLBAR_ICONS))
+    for name, codepoint in assigned:
         codepoints[name] = codepoint
         cmap[codepoint] = name
         colored = []
@@ -215,7 +219,9 @@ def build(icons, mapping, saturation):
                 layer_names.append(layer)
         if not colored:
             raise ValueError(f"Empty icon for {name}")
-        layers[name] = colored
+        # Toolbar outlines inherit the terminal foreground for disabled and active states.
+        if name not in TOOLBAR_ICONS:
+            layers[name] = colored
         # A standard glyf outline also makes the silhouette available to
         # renderers that only implement monochrome TrueType.
         base = TTGlyphPen(glyphs)
@@ -233,15 +239,16 @@ def build(icons, mapping, saturation):
                   usWinAscent=ASCENT, usWinDescent=EM - ASCENT, xAvgCharWidth=EM)
     font.setupNameTable({
         "familyName": "Godot Scene Icons", "styleName": "Regular",
-        "uniqueFontIdentifier": f"godot.nvim:GodotSceneIcons:4.7.2:{saturation:g}",
+        "uniqueFontIdentifier": f"godot.nvim:GodotSceneIcons:4.7.2:{saturation:g}:1.1",
         "fullName": "Godot Scene Icons", "psName": "GodotSceneIcons-Regular",
-        "version": "Version 1.000",
+        "version": "Version 1.100",
         "copyright": "Copyright (c) 2014-present Godot Engine contributors; "
                      "2007-2014 Juan Linietsky, Ariel Manzur.",
         "licenseDescription": "MIT License. See accompanying GODOT-LICENSE.txt.",
         "licenseInfoURL": "https://github.com/godotengine/godot/blob/4.7.2-stable/LICENSE.txt",
     })
     font.setupPost(isFixedPitch=1)
+    font.font["head"].fontRevision = 1.1
     font.font["COLR"] = buildCOLR(layers, version=0, glyphMap=font.font.getReverseGlyphMap())
     font.font["CPAL"] = buildCPAL([[tuple(v / 255 for v in color) for color in palette]])
     font.font["head"].created = font.font["head"].modified = 3869769600  # 2026-08-17 UTC

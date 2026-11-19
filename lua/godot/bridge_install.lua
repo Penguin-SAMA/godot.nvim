@@ -2,9 +2,12 @@ local uv = vim.uv
 local project = require("godot.project")
 local M = {}
 local cfg = "res://addons/nvim_bridge/plugin.cfg"
-local files = { "plugin.cfg", "plugin.gd", "scene_actions.gd" }
--- Exact bytes distributed before external script attachment was fixed.
-local previous = { ["scene_actions.gd"] = "213da130603f2427f3162b1088fa2ee6ac3e6566e18e1c27df0844b7bad798ad" }
+local files = { "plugin.cfg", "run_bar.gd", "scene_actions.gd", "plugin.gd" }
+-- Allow upgrades from the exact previously distributed versions.
+local previous = {
+  ["plugin.gd"] = "e3003143cf60614f128c209124b62c1e2b236ad4ceb4bb247a5d0ebff1818744",
+  ["scene_actions.gd"] = "213da130603f2427f3162b1088fa2ee6ac3e6566e18e1c27df0844b7bad798ad",
+}
 
 local function read(path)
   local f = io.open(path, "rb")

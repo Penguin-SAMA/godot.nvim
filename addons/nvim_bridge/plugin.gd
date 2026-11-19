@@ -2,6 +2,7 @@
 extends EditorPlugin
 
 const Scenes = preload("scene_actions.gd")
+const RunControls = preload("run_bar.gd")
 const RECORD := "res://.godot/godot-nvim-editor.json"
 const MAX_REQUEST := 1024 * 1024
 
@@ -11,6 +12,8 @@ var token := ""
 var key_path := ""
 var busy := false
 var scenes: RefCounted
+var run_bar: RunControls
+var next_run_update := 0
 var startup_args := PackedStringArray()
 var published := ""
 
@@ -84,6 +87,8 @@ func _enter_tree() -> void:
 		push_error("Neovim bridge could not write its project connection file")
 		return
 	if DisplayServer.get_name() != "headless":
+		run_bar = RunControls.new()
+		add_debugger_plugin(run_bar)
 		_update_record()
 		EditorInterface.get_editor_settings().settings_changed.connect(_update_record)
 
@@ -95,6 +100,8 @@ func _update_record() -> void:
 
 
 func _exit_tree() -> void:
+	if run_bar != null:
+		remove_debugger_plugin(run_bar)
 	for peer in peers.keys():
 		peer.disconnect_from_host()
 	peers.clear()
@@ -163,6 +170,13 @@ func _process(_delta: float) -> void:
 			_dispatch(peer, request)
 			end = bytes.find(10)
 		state.bytes = bytes
+	if run_bar != null and not peers.is_empty() and Time.get_ticks_msec() >= next_run_update:
+		next_run_update = Time.get_ticks_msec() + 200
+		var status: Dictionary = run_bar.state()
+		for peer in peers:
+			if peers[peer].get("watch_run", false) and peers[peer].get("run_state") != status:
+				peers[peer].run_state = status
+				_send(peer, {"event": "run_state", "data": status})
 
 
 func _dispatch(peer: StreamPeerTCP, request: Dictionary) -> void:
@@ -173,6 +187,9 @@ func _dispatch(peer: StreamPeerTCP, request: Dictionary) -> void:
 	if method == "hello" and params.get("token", "") == token and token != "":
 		peers[peer].authenticated = true
 		result = _identity()
+		if run_bar != null and params.get("watch_run", false):
+			peers[peer].watch_run = true
+			result["run_controls"] = true
 	elif not peers[peer].authenticated:
 		peer.disconnect_from_host()
 		return
@@ -213,7 +230,10 @@ func _dispatch(peer: StreamPeerTCP, request: Dictionary) -> void:
 		result = {"error": "Another editor action is in progress. Retry after it finishes."}
 	else:
 		busy = true
-		result = await scenes.dispatch(method, params)
+		if method == "run_action":
+			result = await run_bar.dispatch(str(params.get("action", "")), str(params.get("scene", "")))
+		else:
+			result = await scenes.dispatch(method, params)
 		busy = false
 	if result is Dictionary and result.has("error"):
 		_send(peer, {"id": id, "error": result.error})

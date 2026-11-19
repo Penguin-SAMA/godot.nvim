@@ -59,9 +59,10 @@ function M.enable(defer_attach)
   } })
   vim.treesitter.language.register("godot_resource", "gdresource")
   local group = vim.api.nvim_create_augroup("GodotNvim", { clear = true })
+  require("godot.toolbar").setup(group)
   vim.api.nvim_create_autocmd("FileType", { group = group, pattern = { "gdscript", "gdresource", "gdshader" },
     callback = function(e) attach(e.buf) end })
-  vim.api.nvim_create_autocmd("BufEnter", { group = group, callback = function(e)
+  vim.api.nvim_create_autocmd({ "BufEnter", "FocusGained" }, { group = group, callback = function(e)
     local root = M.root(e.buf)
     if root then
       last_root = root
@@ -141,6 +142,7 @@ end
 function M.setup(opts)
   require("godot.config").setup(opts)
   M.enable()
+  require("godot.toolbar").refresh()
 end
 return M
 
