@@ -1,5 +1,6 @@
 local project = require("godot.project")
 local ports = require("godot.ports")
+local process = require("godot.process")
 local uv = vim.uv
 local M = {}
 local tracked, pending, children, observed = {}, {}, {}, {}
@@ -12,31 +13,34 @@ end
 local function record(root, file, mode)
   local data = project.read(file)
   if data and type(data.root) == "string" and project.key(data.root) == project.key(root)
-      and project.alive(data.pid) and data.mode == mode then
+      and data.mode == mode and process.matches(data, file) then
     return data
   end
+end
+
+function M.advertised_editor(root)
+  return record(root, root .. "/.godot/godot-nvim-editor.json", "editor")
 end
 
 local function candidates(root, purpose)
   local list, seen = {}, {}
   local editor_only = purpose == "editor" or purpose == "debug_current"
-  local function add(file, mode)
-    local s = record(root, file, mode)
+  local function add(s)
     if s and not seen[s.pid] then
       seen[s.pid] = true
       list[#list + 1] = s
     end
   end
   -- The addon also advertises editors launched from the Godot project manager.
-  add(root .. "/.godot/godot-nvim-editor.json", "editor")
-  add(path(root, "editor"), "editor")
+  add(M.advertised_editor(root))
+  add(record(root, path(root, "editor"), "editor"))
   for _, s in ipairs(observed[project.key(root)] or {}) do
-    if project.alive(s.pid) and not seen[s.pid] and (not editor_only or s.mode == "editor") then
+    if not seen[s.pid] and (not editor_only or s.mode == "editor") and process.matches(s) then
       seen[s.pid] = true
       list[#list + 1] = s
     end
   end
-  if not editor_only then add(path(root, "headless"), "headless") end
+  if not editor_only then add(record(root, path(root, "headless"), "headless")) end
   return list
 end
 
@@ -92,6 +96,7 @@ local function launch(root, mode)
     end)
   end)
   s.pid = proc.pid
+  s.started_us = process.started_us(s.pid)
   children[s.pid] = proc
   local saved, why = pcall(project.write, path(root, mode), s)
   if not saved then
@@ -165,7 +170,7 @@ function M.ensure(root, purpose, callback)
           if purpose == "debug_current" then
             error("Open a .tscn in Neovim or open the scene in Godot with an active debug service.")
           end
-          if spawned and not project.alive(spawned.pid) then
+          if spawned and not process.matches(spawned) then
             error("Godot exited during startup for " .. root .. ". Check the configured executable and project.")
           end
           local mode = purpose == "editor" and "editor" or "headless"
@@ -188,6 +193,9 @@ function M.ensure(root, purpose, callback)
   end
   if #candidates(root, purpose) == 0 then
     require("godot.discovery").find(root, function(found)
+      for _, s in ipairs(found) do
+        s.started_us = process.started_us(s.pid)
+      end
       observed[project.key(root)] = found
       if #found > 0 then discovery_grace = uv.now() + 6000 end
       poll()

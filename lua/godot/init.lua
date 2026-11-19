@@ -27,11 +27,8 @@ local function notify_error(err)
 end
 
 local function subscribe(root)
-  local record = project.read(root .. "/.godot/godot-nvim-editor.json")
-  if record and type(record.root) == "string" and record.mode == "editor"
-      and project.key(record.root) == project.key(root) and project.alive(record.pid) then
-    require("godot.bridge").subscribe(root, record)
-  end
+  local record = session.advertised_editor(root)
+  if record then require("godot.bridge").subscribe(root, record) end
 end
 
 local function reconnect(root)
