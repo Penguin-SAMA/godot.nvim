@@ -6,7 +6,9 @@ $ErrorActionPreference = 'Stop'
 $family = 'Godot Scene Icons'
 $source = Get-Item -LiteralPath (Join-Path $PSScriptRoot '..\fonts\GodotSceneIcons.ttf')
 $directory = Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Fonts'
-$destination = Join-Path $directory $source.Name
+# DirectWrite can retain the old character map when a registered TTF is replaced in place.
+$hash = (Get-FileHash -LiteralPath $source.FullName).Hash
+$destination = Join-Path $directory ("GodotSceneIcons-" + $hash.Substring(0, 16) + ".ttf")
 $registry = 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts'
 $name = "$family (TrueType)"
 
@@ -14,7 +16,7 @@ if ($PSCmdlet.ShouldProcess($destination, "Install $family for the current user"
     [void][IO.Directory]::CreateDirectory($directory)
     $hadFile = Test-Path -LiteralPath $destination
     $sameFile = $hadFile -and
-        ((Get-FileHash -LiteralPath $source.FullName).Hash -eq (Get-FileHash -LiteralPath $destination).Hash)
+        ($hash -eq (Get-FileHash -LiteralPath $destination).Hash)
     if (-not (Test-Path -LiteralPath $registry)) {
         [void](New-Item -Path $registry)
     }
@@ -25,6 +27,8 @@ if ($PSCmdlet.ShouldProcess($destination, "Install $family for the current user"
             Add-Type -Namespace GodotSceneFont -Name Native -MemberDefinition @'
             [System.Runtime.InteropServices.DllImport("gdi32.dll", CharSet=System.Runtime.InteropServices.CharSet.Unicode, ExactSpelling=true)]
             public static extern int AddFontResourceW(string path);
+            [System.Runtime.InteropServices.DllImport("gdi32.dll", CharSet=System.Runtime.InteropServices.CharSet.Unicode, ExactSpelling=true)]
+            public static extern bool RemoveFontResourceW(string path);
             [System.Runtime.InteropServices.DllImport("user32.dll")]
             public static extern bool SendNotifyMessageW(System.IntPtr window, uint message, System.UIntPtr wParam, System.IntPtr lParam);
 '@
@@ -33,6 +37,10 @@ if ($PSCmdlet.ShouldProcess($destination, "Install $family for the current user"
         $backup = "$stage.bak"
         $placed = $false
         $updatedRegistration = $false
+        $removed = 0
+        $oldManaged = $registered -and $registered -ne $destination -and
+            ([IO.Path]::GetDirectoryName($registered) -eq $directory) -and
+            ([IO.Path]::GetFileName($registered) -match '^GodotSceneIcons(?:-[A-Fa-f0-9]{16})?\.ttf$')
         try {
             if (-not $sameFile) {
                 [IO.File]::Copy($source.FullName, $stage)
@@ -44,6 +52,9 @@ if ($PSCmdlet.ShouldProcess($destination, "Install $family for the current user"
                 if ($null -ne $registered) { $oldKind = $key.GetValueKind($name) }
                 [void](New-ItemProperty -LiteralPath $registry -Name $name -Value $destination -PropertyType String -Force)
                 $updatedRegistration = $true
+            }
+            if ($oldManaged) {
+                while ([GodotSceneFont.Native]::RemoveFontResourceW($registered)) { $removed++ }
             }
             if ([GodotSceneFont.Native]::AddFontResourceW($destination) -eq 0) {
                 throw "Windows could not load the font at $destination."
@@ -57,11 +68,17 @@ if ($PSCmdlet.ShouldProcess($destination, "Install $family for the current user"
                 if ($null -eq $registered) { Remove-ItemProperty -LiteralPath $registry -Name $name }
                 else { [void](New-ItemProperty -LiteralPath $registry -Name $name -Value $registered -PropertyType $oldKind -Force) }
             }
+            for ($i = 0; $i -lt $removed; $i++) { [void][GodotSceneFont.Native]::AddFontResourceW($registered) }
             throw
         } finally {
             [IO.File]::Delete($stage)
         }
         [IO.File]::Delete($backup)
+        if ($oldManaged) {
+            try { [IO.File]::Delete($registered) }
+            catch [IO.IOException] { Write-Verbose "The previous font file is still in use: $registered" }
+            catch [UnauthorizedAccessException] { Write-Verbose "The previous font file is still in use: $registered" }
+        }
         # HWND_BROADCAST, WM_FONTCHANGE
         [void][GodotSceneFont.Native]::SendNotifyMessageW([IntPtr]0xffff, 0x001d, [UIntPtr]::Zero, [IntPtr]::Zero)
     }

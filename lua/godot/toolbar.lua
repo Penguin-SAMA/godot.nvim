@@ -7,6 +7,14 @@ local fallback = { "▶", "Ⅱ", "■", "▷", "…", "↻" }
 local busy = {}
 local root, key, winbar, right_area
 
+local function highlights()
+  local dark = vim.o.background == "dark"
+  -- Only change the glyph foreground. The surrounding bar supplies the background.
+  api.nvim_set_hl(0, "GodotRunIcon", { fg = dark and "#e0e0e0" or "#404040", ctermfg = dark and 253 or 238, default = true })
+  api.nvim_set_hl(0, "GodotRunDisabled", { fg = dark and "#777777" or "#999999", ctermfg = dark and 243 or 247, default = true })
+  api.nvim_set_hl(0, "GodotRunActive", { fg = dark and "#80aeff" or "#3666a3", ctermfg = dark and 111 or 25, default = true })
+end
+
 local function disabled(action, state)
   return (action == "pause" and not state.can_pause) or (action == "stop" and not state.can_stop)
 end
@@ -20,7 +28,7 @@ function M.render()
     local index = state.mode == action and 6 or i -- The running scene's button becomes Reload.
     local glyph = official and vim.fn.nr2char(0xF4100 + index - 1) or fallback[index]
     local active = state.mode == action or (action == "pause" and state.paused)
-    local hl = disabled(action, state) and "Comment" or active and "Special" or "TabLineSel"
+    local hl = disabled(action, state) and "GodotRunDisabled" or active and "GodotRunActive" or "GodotRunIcon"
     parts[i] = ("%%#%s#%%%d@v:lua.require'godot.toolbar'.click@ %s %%T"):format(hl, i, glyph)
   end
   return table.concat(parts) .. "%*"
@@ -107,6 +115,8 @@ function M.refresh()
 end
 
 function M.setup(group)
+  highlights()
+  api.nvim_create_autocmd("ColorScheme", { group = group, callback = highlights })
   local pending = false
   local function refresh()
     if pending then return end
