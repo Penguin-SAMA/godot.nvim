@@ -3,7 +3,15 @@ local uv = vim.uv
 local project = require("godot.project")
 local clients = {}
 local connecting = {}
-local changing = { add_node = true, attach_script = true, connect_signal = true, undo = true }
+local changing = {
+  add_node = true,
+  rename_node = true,
+  delete_node = true,
+  reparent_node = true,
+  attach_script = true,
+  connect_signal = true,
+  undo = true,
+}
 
 local function report(err)
   vim.notify("godot.nvim: " .. err, vim.log.levels.WARN)
