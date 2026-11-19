@@ -1,6 +1,9 @@
 @tool
 extends RefCounted
 
+const SceneStructure = preload("scene_structure.gd")
+const STRUCTURAL_METHODS = ["rename_node", "delete_node", "reparent_node"]
+
 var plugin: EditorPlugin
 var disk_versions := {}
 var known_actions := {}
@@ -202,6 +205,41 @@ func _add(root: Node, p: Dictionary) -> Dictionary:
 	return _save({"path": String(root.get_path_to(node))})
 
 
+func _restore_owners(owners: Dictionary) -> void:
+	for member: Node in owners:
+		member.owner = owners[member]
+
+
+func _structure(root: Node, method: String, p: Dictionary) -> Dictionary:
+	var prepared := SceneStructure.prepare(root, method, p)
+	if prepared.has("error"):
+		return prepared
+	var node: Node = prepared.node
+	var old_parent: Node = prepared.old_parent
+	var undo := plugin.get_undo_redo()
+	var verb: String = {"rename_node": "Rename", "delete_node": "Delete", "reparent_node": "Reparent"}[method]
+	undo.create_action("%s %s" % [verb, node.name], UndoRedo.MERGE_DISABLE, root)
+	match method:
+		"rename_node":
+			undo.add_do_property(node, "name", prepared.name)
+			undo.add_undo_property(node, "name", node.name)
+		"delete_node":
+			undo.add_do_method(old_parent, "remove_child", node)
+			undo.add_undo_method(old_parent, "add_child", node)
+			undo.add_undo_reference(node)
+		"reparent_node":
+			undo.add_do_method(node, "reparent", prepared.parent, true)
+			undo.add_do_method(self, "_restore_owners", prepared.owners)
+			undo.add_undo_method(node, "reparent", old_parent, false)
+	if method != "rename_node":
+		undo.add_undo_method(old_parent, "move_child", node, prepared.index)
+		undo.add_undo_method(self, "_restore_owners", prepared.owners)
+		if method == "reparent_node" and prepared.transform != null:
+			undo.add_undo_property(node, "transform", prepared.transform)
+	_commit(root)
+	return _save({"deleted": true} if method == "delete_node" else {"path": String(root.get_path_to(node))})
+
+
 func _attach(root: Node, p: Dictionary) -> Dictionary:
 	var node := _node(root, str(p.get("node", "")))
 	var path := str(p.get("script_path", ""))
@@ -371,7 +409,7 @@ func _undo(root: Node, modified: Array) -> Dictionary:
 func dispatch(method: String, p: Dictionary) -> Variant:
 	if method == "creatable_types":
 		return _types()
-	if method not in ["scene_tree", "add_node", "attach_script", "signals", "connect_signal", "undo"]:
+	if method not in ["scene_tree", "add_node", "attach_script", "signals", "connect_signal", "undo"] and method not in STRUCTURAL_METHODS:
 		return {"error": "Unknown bridge method: " + method}
 	var root := await _scene(str(p.get("scene", "")))
 	if root == null:
@@ -390,6 +428,8 @@ func dispatch(method: String, p: Dictionary) -> Variant:
 	var conflict := _disk_conflict(root)
 	if conflict != "":
 		return {"error": conflict}
+	if method in STRUCTURAL_METHODS:
+		return _structure(root, method, p)
 	match method:
 		"add_node":
 			return _add(root, p)

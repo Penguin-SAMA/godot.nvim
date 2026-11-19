@@ -2,11 +2,14 @@ local uv = vim.uv
 local project = require("godot.project")
 local M = {}
 local cfg = "res://addons/nvim_bridge/plugin.cfg"
-local files = { "plugin.cfg", "run_bar.gd", "scene_actions.gd", "plugin.gd" }
+local files = { "plugin.cfg", "run_bar.gd", "scene_structure.gd", "scene_actions.gd", "plugin.gd" }
 -- Allow upgrades from the exact previously distributed versions.
 local previous = {
-  ["plugin.gd"] = "e3003143cf60614f128c209124b62c1e2b236ad4ceb4bb247a5d0ebff1818744",
-  ["scene_actions.gd"] = "213da130603f2427f3162b1088fa2ee6ac3e6566e18e1c27df0844b7bad798ad",
+  ["plugin.gd"] = { ["e3003143cf60614f128c209124b62c1e2b236ad4ceb4bb247a5d0ebff1818744"] = true },
+  ["scene_actions.gd"] = {
+    ["213da130603f2427f3162b1088fa2ee6ac3e6566e18e1c27df0844b7bad798ad"] = true,
+    ["7a5110cfe5a7bca8b04dc4cf45614d11b8c40adb5e1db8fd5b9564c84899699e"] = true,
+  },
 }
 
 local function read(path)
@@ -132,7 +135,7 @@ function M.run(root)
     local stat = uv.fs_lstat(dest)
     local existing = stat and read(dest)
     if existing ~= bundled then
-      if stat and (stat.type ~= "file" or not existing or not previous[name] or vim.fn.sha256(existing) ~= previous[name]) then
+      if stat and (stat.type ~= "file" or not existing or not previous[name] or not previous[name][vim.fn.sha256(existing)]) then
         return nil, "Existing add-on file differs: " .. dest
       end
       if modified[project.key(dest)] then return nil, "Save the modified add-on buffer before installing: " .. dest end

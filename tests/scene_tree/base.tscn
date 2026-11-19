@@ -1,0 +1,19 @@
+[gd_scene format=3]
+[ext_resource type="PackedScene" path="res://branch.tscn" id="1"]
+[node name="Root" type="Node"]
+[node name="Left" type="Node2D" parent="."]
+position = Vector2(30, 40)
+[node name="Target" type="Node2D" parent="Left"]
+position = Vector2(2, 5)
+[node name="Child" type="Node2D" parent="Left/Target"]
+[node name="Sibling" type="Node2D" parent="Left"]
+[node name="Right" type="Node2D" parent="."]
+position = Vector2(60, 80)
+[node name="Existing" type="Node2D" parent="Right"]
+[node name="Branch" parent="." instance=ExtResource("1")]
+[node name="Left3" type="Node3D" parent="."]
+position = Vector3(3, 4, 5)
+[node name="Target3" type="Node3D" parent="Left3"]
+position = Vector3(1, 2, 3)
+[node name="Right3" type="Node3D" parent="."]
+position = Vector3(7, 8, 9)
