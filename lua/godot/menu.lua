@@ -1,7 +1,7 @@
 local M = {}
 local api = vim.api
 local prefix = "<leader>G"
-local categories = { p = "项目与连接", e = "编辑与导航", s = "场景树", r = "运行与输出", d = "调试" }
+local categories = { p = "Project", e = "Editing", s = "Scene Tree", r = "Run", d = "Debug" }
 local godot_files = { gdscript = true, gdresource = true, gdshader = true }
 local which_key
 
@@ -11,10 +11,10 @@ local function command(name, arg)
   end
 end
 
-local health = { "h", "检查环境与连接", command("checkhealth", "godot") }
+local health = { "h", "Check Health", command("checkhealth", "godot") }
 
 local function missing_project()
-  vim.notify("请打开 Godot 项目中的文件。插件从文件所在目录向上查找 project.godot。", vim.log.levels.WARN,
+  vim.notify("Open a file in a directory containing project.godot or one of its subdirectories.", vim.log.levels.WARN,
     { title = "godot.nvim" })
 end
 
@@ -22,32 +22,32 @@ local function groups(root, buf)
   local ft = vim.bo[buf].filetype
   if not root and not godot_files[ft] then return { { "p", categories.p, { health } } } end
   local function project_action(key, label, name, arg)
-    if not root then return { key, label .. "（需项目）", missing_project } end
+    if not root then return { key, label .. " (requires project)", missing_project } end
     return { key, label, command(name, arg) }
   end
   local editing = {
-    { "h", "光标处的官方文档", command("GodotDoc") },
-    project_action("g", "打开光标处的资源", "GodotResource"),
+    { "h", "Show Docs at Cursor", command("GodotDoc") },
+    project_action("g", "Open Resource at Cursor", "GodotResource"),
   }
   if ft == "gdscript" or ft == "gdshader" then
-    table.insert(editing, { "f", "格式化当前文件", command("GodotFormat") })
+    table.insert(editing, { "f", "Format File", command("GodotFormat") })
   end
   local debug = {
-    project_action("m", "调试主场景", "GodotDebug", "main"),
-    project_action("g", "继续执行", "GodotDebugAction", "continue"),
+    project_action("m", "Debug Main Scene", "GodotDebug", "main"),
+    project_action("g", "Continue", "GodotDebugAction", "continue"),
   }
   if ft == "gdscript" then
-    table.insert(debug, { "b", "切换当前行断点", command("GodotDebugAction", "toggle_breakpoint") })
+    table.insert(debug, { "b", "Toggle Breakpoint", command("GodotDebugAction", "toggle_breakpoint") })
   end
   return {
-    { "p", categories.p, { health, project_action("o", "打开 Godot 编辑器", "GodotOpen") } },
+    { "p", categories.p, { health, project_action("o", "Open Godot Editor", "GodotOpen") } },
     { "e", categories.e, editing },
-    { "s", categories.s, { project_action("o", "打开当前场景树", "GodotTree") } },
+    { "s", categories.s, { project_action("o", "Open Scene Tree", "GodotTree") } },
     { "r", categories.r, {
-      project_action("m", "运行主场景", "GodotRun", "main"),
-      project_action("c", "运行当前场景", "GodotRun", "current"),
-      project_action("s", "停止游戏", "GodotStop"),
-      project_action("o", "打开输出面板", "GodotOutput"),
+      project_action("m", "Run Main Scene", "GodotRun", "main"),
+      project_action("c", "Run Current Scene", "GodotRun", "current"),
+      project_action("s", "Stop Game", "GodotStop"),
+      project_action("o", "Open Output", "GodotOutput"),
     } },
     { "d", categories.d, debug },
   }
@@ -57,12 +57,12 @@ function M.setup()
   local ok, wk = pcall(require, "which-key")
   if not ok or type(wk.add) ~= "function" then
     if vim.fn.maparg(prefix, "n") == "" then
-      vim.keymap.set("n", prefix, "<Cmd>GodotMenu<CR>", { silent = true, desc = "Godot.nvim 菜单" })
+      vim.keymap.set("n", prefix, "<Cmd>GodotMenu<CR>", { silent = true, desc = "Open Godot Menu" })
     end
     return
   end
   which_key = wk
-  local spec = { { prefix, group = "Godot.nvim" } }
+  local spec = { { prefix, group = "Godot", icon = { icon = "", color = "blue" } } }
   for key, name in pairs(categories) do
     spec[#spec + 1] = { prefix .. key, group = name }
   end
@@ -119,8 +119,8 @@ function M.open()
     local buf = api.nvim_create_buf(false, true)
     vim.bo[buf].bufhidden = "wipe"
     vim.bo[buf].filetype = "godot_menu"
-    local title = group and (" Godot.nvim · " .. group .. " ") or " Godot.nvim "
-    local footer = group and " BS 返回 · Esc 关闭 " or " Esc 关闭 "
+    local title = group and (" Godot · " .. group .. " ") or " Godot "
+    local footer = group and " BS Back · Esc Close " or " Esc Close "
     local width = math.max(vim.fn.strdisplaywidth(title), vim.fn.strdisplaywidth(footer))
     local lines = {}
     for _, item in ipairs(items) do
@@ -161,10 +161,10 @@ function M.open()
     for _, item in ipairs(items) do
       map(item[1], function() choose(item) end, item[2])
     end
-    map("<CR>", function() choose(items[api.nvim_win_get_cursor(win)[1]]) end, "选择")
-    map("<BS>", function() if group then show(home) else close() end end, "返回")
-    map("<Esc>", close, "关闭菜单")
-    map("q", close, "关闭菜单")
+    map("<CR>", function() choose(items[api.nvim_win_get_cursor(win)[1]]) end, "Select")
+    map("<BS>", function() if group then show(home) else close() end end, "Back")
+    map("<Esc>", close, "Close Menu")
+    map("q", close, "Close Menu")
     api.nvim_create_autocmd("WinLeave", { buffer = buf, once = true, callback = function()
       vim.schedule(function()
         if api.nvim_win_is_valid(win) and api.nvim_get_current_win() ~= win then close() end

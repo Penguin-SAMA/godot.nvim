@@ -118,14 +118,14 @@ local function read_scene(root, scene, done)
   local file = scene and vim.startswith(scene, "res://") and (root .. "/" .. scene:sub(7))
   local buf = file and vim.fn.bufnr(file)
   local modified = buf and buf ~= -1 and vim.bo[buf].modified
-  if file and not modified and not vim.uv.fs_stat(file) then return done("找不到场景：" .. scene) end
+  if file and not modified and not vim.uv.fs_stat(file) then return done("Scene not found: " .. scene) end
   local has_bridge = vim.uv.fs_stat(root .. "/addons/nvim_bridge/plugin.cfg")
   local editor = has_bridge and project.read(root .. "/.godot/godot-nvim-editor.json")
   if file and file:lower():match("%.tscn$") and (modified or not (editor and project.alive(editor.pid))) then
     local nodes, err = require("godot.scene_index").file_nodes(file, root)
     if nodes and #nodes > 0 then return done(nil, nodes, scene) end
     if modified or not has_bridge then
-      return done(("无法读取 %s 的节点：%s"):format(scene, err or "场景没有根节点"))
+      return done(("Could not read nodes in %s: %s"):format(scene, err or "Scene has no root node"))
     end
   end
   bridge.call(root, "scene_tree", { scene = scene }, function(err, info)
@@ -176,7 +176,7 @@ local function mappings(view)
   local function change(method, args)
     call(view, method, args, function() refresh(view) end)
   end
-  map("a", "添加子节点", function()
+  map("a", "Add Child Node", function()
     local parent = selected()
     if not parent then return end
     call(view, "creatable_types", {}, function(types)
@@ -188,7 +188,7 @@ local function mappings(view)
       end)
     end)
   end)
-  map("s", "挂载或创建脚本", function()
+  map("s", "Attach or Create Script", function()
     local node = selected()
     if not node then return end
     local base = (view.scene or "res://main.tscn"):match("^(.*[/])")
@@ -196,7 +196,7 @@ local function mappings(view)
       if path and path ~= "" then change("attach_script", { node = node.path, script_path = path }) end
     end)
   end)
-  map("c", "连接信号", function()
+  map("c", "Connect Signal", function()
     local src = selected()
     if not src then return end
     call(view, "signals", { node = src.path }, function(signals)
@@ -215,16 +215,16 @@ local function mappings(view)
       end)
     end)
   end)
-  map("u", "撤销场景操作", function() change("undo", {}) end)
-  map("r", "刷新场景树", function() refresh(view) end)
-  map("q", "关闭场景树", function() sidebar.close(view.win) end)
+  map("u", "Undo Scene Change", function() change("undo", {}) end)
+  map("r", "Refresh Scene Tree", function() refresh(view) end)
+  map("q", "Close Scene Tree", function() sidebar.close(view.win) end)
   local function fold(how) return function() outline.fold(view, how) end end
-  map("za", "展开或折叠分支", fold("toggle"))
-  map("h", "折叠或移到父节点", fold("close"))
-  map("l", "展开或移到子节点", fold("open"))
-  map("<Left>", "折叠或移到父节点", fold("close"))
-  map("<Right>", "展开或移到子节点", fold("open"))
-  map("<CR>", "打开挂载的脚本", function()
+  map("za", "Toggle Branch", fold("toggle"))
+  map("h", "Collapse or Go to Parent", fold("close"))
+  map("l", "Expand or Go to Child", fold("open"))
+  map("<Left>", "Collapse or Go to Parent", fold("close"))
+  map("<Right>", "Expand or Go to Child", fold("open"))
+  map("<CR>", "Open Attached Script", function()
     local node = selected()
     if not node or not node.script or node.script == "" then return end
     if vim.api.nvim_win_is_valid(view.origin) then vim.api.nvim_set_current_win(view.origin) end
@@ -250,14 +250,14 @@ local function mappings(view)
         windows[#windows + 1] = win
       end
     end
-    if #windows == 0 then return warn("请先在分屏中打开本场景挂载的 GDScript。") end
+    if #windows == 0 then return warn("Open a script attached to this scene in a split first.") end
     if #windows == 1 then return insert(windows[1]) end
-    vim.ui.select(windows, { prompt = "选择目标脚本窗口", format_item = function(win)
+    vim.ui.select(windows, { prompt = "Choose Script Window", format_item = function(win)
       return vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(win))
     end }, insert)
   end
-  map("i", "在脚本光标处插入节点路径", function() insert_at_cursor(false) end)
-  map("I", "在脚本中生成 @onready 声明", function() insert_at_cursor(true) end)
+  map("i", "Insert Node Path at Cursor", function() insert_at_cursor(false) end)
+  map("I", "Insert @onready Declaration", function() insert_at_cursor(true) end)
   local dragged, disclosure
   for _, prefix in ipairs({ "", "C-" }) do
     map("<" .. prefix .. "LeftMouse>", "Pick up a scene node", function()
@@ -331,17 +331,17 @@ function M.open(root, arg)
   local path = arg and arg ~= "" and arg or (file:lower():match("%.t?scn$") and file)
   if path then
     local scene = path:match("^uid://") and path or resource(root, path)
-    if not scene then return finish("请选择项目内的场景：" .. root) end
+    if not scene then return finish("Choose a scene in " .. root) end
     load(scene)
   elseif file:lower():match("%.gd$") then
     require("godot.scene_lookup").find(root, file, function(err, scenes)
       if not pending() then return end
       if err then return finish(err) end
       if #scenes == 0 then
-        return finish("未找到挂载 " .. (resource(root, file) or file) .. " 的 .tscn 场景。")
+        return finish("No .tscn scene uses the script " .. (resource(root, file) or file))
       end
       if #scenes == 1 then return load(scenes[1]) end
-      vim.ui.select(scenes, { prompt = "选择挂载此脚本的场景" }, function(scene)
+      vim.ui.select(scenes, { prompt = "Choose a Scene Using This Script" }, function(scene)
         if scene then load(scene) end
       end)
     end)

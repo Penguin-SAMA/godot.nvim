@@ -72,7 +72,7 @@ function M.enable(defer_attach)
     session.release_all()
   end })
   vim.api.nvim_create_user_command("GodotMenu", function() require("godot.menu").open() end,
-    { desc = "打开 Godot.nvim 快捷菜单" })
+    { desc = "Open Godot Menu" })
   require("godot.menu").setup()
   local function command(name, action, opts)
     vim.api.nvim_create_user_command(name, function(args)
