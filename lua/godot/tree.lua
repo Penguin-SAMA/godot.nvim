@@ -156,8 +156,10 @@ end
 local function refresh(view)
   view.revision = view.revision + 1
   local revision = view.revision
+  view.refreshing = true
   read_scene(view.root, view.scene, function(err, nodes)
     if views[view.buf] ~= view or revision ~= view.revision then return end
+    view.refreshing = false
     if err then return warn(err) end
     outline.render(view, nodes)
   end)
@@ -217,11 +219,14 @@ local function mappings(view)
   end)
   local function structural_edit(key, desc, prompt)
     map(key, desc, function()
+      if view.refreshing then return end
       local node = selected()
       if not node or node.path == "." then return end
       local revision = view.revision
       prompt(node, function(method, args)
-        if views[view.buf] == view and view.revision == revision then change(method, args) end
+        if views[view.buf] == view and view.revision == revision and not view.refreshing then
+          change(method, args)
+        end
       end)
     end)
   end
@@ -319,6 +324,7 @@ local function present(view, nodes, tab)
     local current = views[api.nvim_win_get_buf(win)]
     if current and current.root == view.root and current.scene == view.scene then
       current.revision = current.revision + 1
+      current.refreshing = false
       current.origin = view.origin
       api.nvim_set_current_win(win)
       outline.render(current, nodes)

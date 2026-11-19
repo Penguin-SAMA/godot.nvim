@@ -13,11 +13,16 @@ local fixture = node('.', { node('Left', {
 }), node('Right') })
 fixture.scene, fixture.name = scene, 'Root'
 local calls, fail = {}, false
+local defer_refresh, complete_refresh
 package.loaded['godot.bridge'] = {
   call = function(directory, method, args, callback)
     assert(directory == root)
     calls[#calls + 1] = { method, vim.deepcopy(args) }
     if fail then return callback('Fixture rejected edit') end
+    if defer_refresh and method == 'scene_tree' then
+      complete_refresh = function(err) callback(err, fixture) end
+      return
+    end
     callback(nil, method == 'scene_tree' and fixture or {})
   end,
 }
@@ -93,6 +98,18 @@ for _, key in ipairs({ 'R', 'd', 'm' }) do
   stale.accept(stale.items and stale.items[2] or 'Stale', 2)
   no_calls()
 end
+
+defer_refresh = true
+press('r', target)
+for _, key in ipairs({ 'R', 'd', 'm' }) do
+  eq(nil, press(key, target))
+end
+eq({ { 'scene_tree', { scene = scene } } }, calls)
+complete_refresh()
+defer_refresh = false
+calls = {}
+press('R', target).accept('AfterRefresh')
+expect_edit('rename_node', { node = target, name = 'AfterRefresh' })
 
 fail = true
 press('R', target).accept('Rejected')
