@@ -17,7 +17,14 @@ for _, client in ipairs(root and project.clients(root) or {}) do
       "local pid, path, row, col = ...; return vim.uv.os_getpid() == pid and require('godot.external').open_file(path, row, col)",
       { client.pid, file, line, col })
     vim.fn.chanclose(channel)
-    if called and opened then return end
+    if called and opened then
+      if type(opened) == "table" and opened.tui_pid then
+        -- Godot started this process from the foreground editor. Windows
+        -- grants that caller the right to activate another application's UI.
+        pcall(function() require("godot.windows_terminal").focus(opened.tui_pid) end)
+      end
+      return
+    end
   end
 end
 

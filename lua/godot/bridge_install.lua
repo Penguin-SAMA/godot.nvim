@@ -3,6 +3,8 @@ local project = require("godot.project")
 local M = {}
 local cfg = "res://addons/nvim_bridge/plugin.cfg"
 local files = { "plugin.cfg", "plugin.gd", "scene_actions.gd" }
+-- Exact bytes distributed before external script attachment was fixed.
+local previous = { ["scene_actions.gd"] = "213da130603f2427f3162b1088fa2ee6ac3e6566e18e1c27df0844b7bad798ad" }
 
 local function read(path)
   local f = io.open(path, "rb")
@@ -10,6 +12,38 @@ local function read(path)
   local contents = f:read("*a")
   f:close()
   return contents
+end
+
+-- Move the actual file aside before validating it, then publish exclusively.
+-- A concurrent saver can replace the destination at either point.
+local function install_file(source, dest, expected)
+  if not expected then return uv.fs_copyfile(source, dest, { excl = true }) end
+  local fd, backup = uv.fs_mkstemp(dest .. ".XXXXXX")
+  if not fd then return nil, backup end
+  uv.fs_close(fd)
+  local moved, err = uv.fs_rename(dest, backup)
+  if not moved then uv.fs_unlink(backup); return nil, err end
+  local saved = uv.fs_lstat(backup)
+  if saved and saved.type == "file" and read(backup) == expected then
+    local copied, why, code = uv.fs_copyfile(source, dest, { excl = true })
+    if copied and read(backup) == expected then
+      uv.fs_unlink(backup)
+      return true
+    end
+    if code ~= "EEXIST" then err = why end
+  end
+  err = err or ("Add-on changed during installation: " .. dest)
+  -- Link restores the original without replacing a newer save at dest.
+  local restored = uv.fs_link(backup, dest)
+  if not restored and saved and saved.type == "file" and not uv.fs_lstat(dest) then
+    restored = uv.fs_copyfile(backup, dest, { excl = true })
+  end
+  if restored then
+    uv.fs_unlink(backup)
+  else
+    err = err .. ". Previous file retained at " .. backup
+  end
+  return nil, err
 end
 
 -- Keep comments, other add-ons, encoding and newline style in project.godot.
@@ -64,11 +98,13 @@ end
 
 function M.run(root)
   local project_file = root .. "/project.godot"
+  local modified = {}
   for _, buf in ipairs(vim.api.nvim_list_bufs()) do
-    if vim.bo[buf].modified and project.key(vim.api.nvim_buf_get_name(buf)) == project.key(project_file) then
-      return nil, "Save the modified project.godot buffer before installing"
+    if vim.bo[buf].modified then
+      modified[project.key(vim.api.nvim_buf_get_name(buf))] = true
     end
   end
+  if modified[project.key(project_file)] then return nil, "Save the modified project.godot buffer before installing" end
   local original = read(project_file)
   if not original then return nil, "Cannot read " .. project_file end
   local updated, err = enable(original .. (original:match("\n$") and "" or "\n"))
@@ -85,19 +121,26 @@ function M.run(root)
   if updated ~= original and uv.fs_lstat(project_file).type == "link" then
     return nil, "Enable the bridge in Godot's Plugins settings for this linked project.godot"
   end
-  local missing = {}
+  local pending, changed = {}, {}
   for _, name in ipairs(files) do
     local dest = target .. "/" .. name
-    if uv.fs_lstat(dest) then
-      if read(dest) ~= read(source .. "/" .. name) then return nil, "Existing add-on file differs: " .. dest end
-    else
-      missing[#missing + 1] = name
+    local bundled = read(source .. "/" .. name)
+    if not bundled then return nil, "Bundled Godot add-on is missing " .. name end
+    local stat = uv.fs_lstat(dest)
+    local existing = stat and read(dest)
+    if existing ~= bundled then
+      if stat and (stat.type ~= "file" or not existing or not previous[name] or vim.fn.sha256(existing) ~= previous[name]) then
+        return nil, "Existing add-on file differs: " .. dest
+      end
+      if modified[project.key(dest)] then return nil, "Save the modified add-on buffer before installing: " .. dest end
+      pending[#pending + 1] = { name = name, dest = dest, existing = existing }
     end
   end
   vim.fn.mkdir(target, "p")
-  for _, name in ipairs(missing) do
-    local ok, why = uv.fs_copyfile(source .. "/" .. name, target .. "/" .. name, { excl = true })
+  for _, file in ipairs(pending) do
+    local ok, why = install_file(source .. "/" .. file.name, file.dest, file.existing)
     if not ok then return nil, why end
+    changed[project.key(file.dest)] = true
   end
   if original ~= updated then
     local fd, temp = uv.fs_mkstemp(project_file .. ".XXXXXX")
@@ -112,10 +155,11 @@ function M.run(root)
     local ok
     ok, why = uv.fs_rename(temp, project_file)
     if not ok then uv.fs_unlink(temp); return nil, why end
-    for _, buf in ipairs(vim.api.nvim_list_bufs()) do
-      if vim.api.nvim_buf_is_loaded(buf) and project.key(vim.api.nvim_buf_get_name(buf)) == project.key(project_file) then
-        vim.api.nvim_buf_call(buf, function() vim.cmd.checktime() end)
-      end
+    changed[project.key(project_file)] = true
+  end
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_loaded(buf) and changed[project.key(vim.api.nvim_buf_get_name(buf))] then
+      vim.api.nvim_buf_call(buf, function() vim.cmd.checktime() end)
     end
   end
   return true

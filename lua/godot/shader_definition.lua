@@ -2,9 +2,12 @@ local M = {}
 
 local function resolve(root, file, include)
   local base = vim.fs.dirname(file)
-  if vim.startswith(include, "res://") then base, include = root, include:sub(7) end
+  if vim.startswith(include, "res://") then
+    if not root then return end
+    base, include = root, include:sub(7)
+  end
   local path = vim.fs.normalize(vim.fs.joinpath(base, include))
-  if vim.fs.relpath(root, path) then return path end
+  if not root or vim.fs.relpath(root, path) then return path end
 end
 
 local function contents(path)
@@ -68,13 +71,14 @@ function M.correct(root, params, result, encoding)
       local zero = { line = 0, character = 0 }
       return { uri = vim.uri_from_fname(path), range = { start = zero, ["end"] = zero } }
     end
-    return result
+    return nil
   end
   local name = (line:sub(1, byte):match("[%w_]*$") or "") .. (line:sub(byte + 1):match("^([%w_]*)%s*%(") or "")
   if name == "" or not line:find("%f[%w_]" .. name .. "%s*%(") then return result end
   local hit = type(result) == "table" and (result.uri and result or result[1])
-  if hit and hit.uri and vim.fs.normalize(vim.uri_to_fname(hit.uri)) ~= file then return result end
+  if root and hit and hit.uri and vim.fs.normalize(vim.uri_to_fname(hit.uri)) ~= file then return result end
   local visited, matches = {}, {}
+  local unresolved_resource = false
   local function walk(path, primary)
     local key = vim.fn.has("win32") == 1 and path:lower() or path
     if visited[key] then return end
@@ -93,11 +97,18 @@ function M.correct(root, params, result, encoding)
     end
     for _, child in ipairs(includes) do
       local nested = resolve(root, path, child)
-      if nested then walk(nested, false) end
+      if nested then
+        walk(nested, false)
+      elseif not root and vim.startswith(child, "res://") then
+        unresolved_resource = true
+      end
     end
   end
   walk(file, true)
-  return #matches > 0 and matches or result
+  if #matches > 0 then return matches end
+  -- Without a project, the server may have resolved res:// against its cwd
+  -- and attributed a function from that unrelated file to the caller.
+  if not unresolved_resource then return result end
 end
 
 return M

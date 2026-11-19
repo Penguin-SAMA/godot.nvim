@@ -32,11 +32,13 @@ return {
 | --- | --- |
 | GDScript 补全、重命名、查引用 | Godot 编辑器可执行文件 |
 | GDScript 语义高亮、场景文件补全和节点树 | Tree-sitter 的 `gdscript`、`godot_resource` 解析器。使用 nvim-treesitter 时执行 `:TSInstall gdscript godot_resource gdshader`，同时安装着色器高亮支持。 |
-| 着色器补全、悬停、诊断 | `gdshader-lsp`，插件以 stdio 启动服务。[gdshader-lsp](https://github.com/GodOfAvacyn/gdshader-lsp) |
+| 着色器补全、悬停、诊断 | 下载 C++ 版 `gdshader-lsp` 的 v0.3.2。Godot 4.7.2 的验收使用该版本发布的 Windows 可执行文件。[gdshader-lsp v0.3.2](https://github.com/Dead-Shrimp-Studio/gdshader-lsp-cpp/releases/tag/v0.3.2) |
 | 脚本与着色器格式化 | `gdscript-formatter` 和 LLVM 的 `clang-format`。[GDScript formatter](https://github.com/GDQuest/GDScript-formatter) |
 | 运行与调试 | 将 `mfussenegger/nvim-dap` 加入 Neovim 插件列表。[nvim-dap](https://github.com/mfussenegger/nvim-dap) |
 
 `setup()` 接受 `shader_lsp`、`gdscript_formatter`、`clang_format` 的可执行文件路径，默认值与上表中的命令名相同。项目中的 GDScript 上下文由 Godot 提供。若已有另一款插件也为 GDScript 启动语言服务，迁移时请关闭它的 Godot LSP 配置，避免同一缓冲区出现重复候选项。
+
+直接打开独立的 `.gdshader` 或 `.gdshaderinc` 即会启动着色器语言服务。相对路径的 `#include` 从当前文件所在目录解析，`res://` 需要所在项目的 `project.godot`。如果已在 LazyVim 的 nvim-lspconfig 配置中启用 `gdshader_lsp`，请在它的 `opts.servers` 中设置 `gdshader_lsp = { enabled = false }`，由 godot.nvim 统一提供补全。
 
 ## 快捷键
 
@@ -94,7 +96,11 @@ return {
 
 在节点树中，`a` 添加子节点，`s` 挂载或创建脚本，`c` 连接信号，`u` 撤销，`r` 刷新。启用 Neovim 鼠标后，将节点拖到同一场景挂载的脚本中即可插入相对路径，按住 Ctrl 拖动则生成类成员 `@onready` 声明。节点增改与场景保存都交给图形编辑器。若 Neovim 中有相关未保存的修改，先处理提示的缓冲区。
 
+已安装旧版桥接的项目，请执行一次 `:GodotBridgeInstall` 并重新打开该项目的 Godot 编辑器。之后用 `s` 新建的脚本会作为外部 `.gd` 资源挂载。旧场景若已经把脚本保存成内置资源，可以在 Godot 中核对两份脚本内容和节点的导出属性，然后重新挂载要保留的外部脚本并保存场景。
+
 后台编辑器按项目共享，最后一个使用它的 Neovim 正常退出时回收。Windows 上会核对监听端口的进程归属。手动启动的 Godot 可通过桥接登记，或通过带绝对项目路径的编辑器启动参数识别。`:GodotOpen` 打开的图形窗口由用户关闭。
+
+执行 `:GodotExternalEditor` 后，从 Godot 的文件系统面板双击脚本，会定位到对应项目的 Neovim 会话。在 Windows Terminal 中，每个会话使用独立标签页、并允许应用更改标题时，插件还能把该窗口和标签页切到前台。它会临时设置并恢复标签标题，因此同名标签也能区分。手动锁定标题或将多个会话放在同一标签的分屏中时，文件仍可送到目标会话，前台切换需要手动确认。
 
 如果场景在 Godot 打开期间已从 Neovim 保存，先在 Godot 处理外部改动，再继续节点操作。更换节点原有的脚本时，请在 Godot 中核对该节点的导出属性。侧栏的挂载命令适用于没有脚本的节点，重复选择同一脚本会保留现有属性。
 
@@ -128,11 +134,11 @@ formatters = {
 
 从 Git 安装后，可以在有主场景的 Godot 项目里打开一个已挂载的脚本，用 `<leader>Gso` 查看对应场景树，用 `<leader>Grm` 运行主场景，再用 `<leader>Gro` 查看输出。
 
-完整测试脚本和测试项目保存在维护者本地开发工作区的 `tests/` 中。有该目录时，可以在 Windows 桌面用 PowerShell 7 运行下列命令。先安装上表的可执行工具和解析器。若 `godot_resource` 解析器尚未放在 Neovim 的运行时目录，可额外传 `-ResourceParser` 指定其 DLL。测试会复制小型项目，场景和外部编辑器用例会短暂打开窗口。
+完整测试脚本和测试项目保存在维护者本地开发工作区的 `tests/` 中。有该目录时，可以在安装了 Windows Terminal 的 Windows 桌面用 PowerShell 7 运行下列命令。先安装上表的可执行工具和解析器。若 `godot_resource` 解析器尚未放在 Neovim 的运行时目录，可额外传 `-ResourceParser` 指定其 DLL。测试会复制小型项目，场景和外部编辑器用例会短暂打开窗口并切换焦点。
 
 ```powershell
 ./tests/run.ps1 -Godot (Get-Command godot).Source -Dap "$env:LOCALAPPDATA/nvim-data/lazy/nvim-dap"
 ```
 
-测试覆盖快捷菜单连按与取消、键盘插入节点路径和声明、干净 Neovim 的实际补全插入、跨文件重命名、双项目连接与回收、场景保存和撤销、真实鼠标拖动、UID 跳转、跨窗口回调、断点重启和运行错误定位。
+测试覆盖快捷菜单、原生补全和 blink.cmp 的实际插入、跨文件重命名、双项目隔离与重连、独立着色器、UID 跳转、鼠标拖入节点、断点重启和运行错误定位。场景验收会用独立 Godot 进程重新加载外部脚本、信号和材质参数。桌面验收会从 Godot 的文件系统面板双击脚本，并检查 Windows Terminal 活动窗口和标签页。
 

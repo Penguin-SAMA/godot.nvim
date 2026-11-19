@@ -11,7 +11,10 @@ function M.check()
   end
   local exe = vim.fn.exepath(config.executable)
   if exe == "" then
-    h.error("Godot missing", { "Set setup({ executable = 'path/to/Godot' })." })
+    h.error("Godot missing: GDScript language service, scene editing, running and debugging unavailable.", {
+      "Download the editor from https://godotengine.org/download/archive/4.7.2-stable/",
+      "Set its path in require('godot').setup({ executable = 'path/to/Godot' }).",
+    })
   else
     local res = vim.system({ exe, "--version" }, { text = true }):wait(5000)
     h.info("Configured engine: " .. exe .. " " .. vim.trim(res.stdout or ""))
@@ -47,18 +50,33 @@ function M.check()
     h.info("Open a file under project.godot to check its services.")
   end
   h.start("Editing and debugging tools")
-  for _, item in ipairs({
-    { config.shader_lsp, "shader completion and diagnostics" },
-    { config.gdscript_formatter, "GDScript formatting" },
-    { config.clang_format, "shader formatting" },
+  for _, tool in ipairs({
+    { option = "shader_lsp", feature = "shader completion, hover, definitions and diagnostics",
+      install = "Download gdshader-lsp for your platform from https://github.com/Dead-Shrimp-Studio/gdshader-lsp-cpp/releases/tag/v0.3.2" },
+    { option = "gdscript_formatter", feature = "GDScript formatting",
+      install = "Download the formatter for your platform from https://github.com/GDQuest/GDScript-formatter/releases" },
+    { option = "clang_format", feature = "shader formatting",
+      install = "Install LLVM for your platform from https://github.com/llvm/llvm-project/releases" },
   }) do
-    if vim.fn.executable(item[1]) == 1 then h.ok(item[1])
-    else h.warn(item[1] .. " missing (" .. item[2] .. "). Install it on PATH or set its path in setup().") end
+    local exe_path = config[tool.option]
+    if vim.fn.executable(exe_path) == 1 then
+      h.ok(exe_path)
+    else
+      h.warn(exe_path .. " missing (" .. tool.feature .. " unavailable).", {
+        tool.install, "Add the executable to PATH or set its path using setup({ " .. tool.option .. " = '...' }).",
+      })
+    end
   end
-  for _, lang in ipairs({ "gdscript", "godot_resource", "gdshader" }) do
+  local parser_features = {
+    gdscript = "GDScript semantic highlighting",
+    godot_resource = "offline scene tree, resource completion, definitions and node type hover",
+    gdshader = "shader syntax highlighting",
+  }
+  for lang, features in vim.spairs(parser_features) do
     local ok, loaded = pcall(vim.treesitter.language.add, lang)
     if ok and loaded then h.ok("Parser: " .. lang)
-    else h.warn("Missing parser: " .. lang, { ":TSInstall " .. lang .. " (nvim-treesitter)" }) end
+    else h.warn("Missing parser: " .. lang .. " (" .. features .. " unavailable).",
+      { ":TSInstall " .. lang .. " (nvim-treesitter)" }) end
   end
   if pcall(require, "dap") then h.ok("nvim-dap")
   else h.info("Install mfussenegger/nvim-dap for running and debugging.") end

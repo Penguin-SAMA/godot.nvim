@@ -211,28 +211,51 @@ end
 
 local function attach_shader(buf, root)
   pcall(vim.treesitter.start, buf, "gdshader")
+  local dir = vim.fs.dirname(vim.api.nvim_buf_get_name(buf))
+  local workspace = root or vim.fs.root(buf, ".git") or dir
   local exe = options().shader_lsp
   if vim.fn.executable(exe) ~= 1 then
     vim.notify_once("godot.nvim: gdshader-lsp executable unavailable: " .. exe, vim.log.levels.WARN)
     return
   end
   local publish = vim.lsp.handlers["textDocument/publishDiagnostics"]
-  local encoding = "utf-16"
+  local shader = require("godot.shader")
+  local encoding, legacy = "utf-16", false
   local function command(dispatch)
-    local rpc = vim.lsp.rpc.start({ exe, "--stdio", "--log-path", "none" }, dispatch, { cwd = root })
-    local request = rpc.request
+    local rpc = vim.lsp.rpc.start({ exe, "--stdio", "--log-path", "none" }, dispatch, { cwd = workspace })
+    local request, notify = rpc.request, rpc.notify
+    rpc.notify = function(method, params)
+      return notify(method, legacy and shader.legacy_params(params) or params)
+    end
     rpc.request = function(method, params, callback, replied)
-      if method ~= "textDocument/definition" then return request(method, params, callback, replied) end
-      return request(method, params, function(err, result, id)
-        if not err then result = require("godot.shader_definition").correct(root, params, result, encoding) end
+      local definition = method == "textDocument/definition"
+      local outgoing = legacy and shader.legacy_params(params) or params
+      if not definition and method ~= "textDocument/completion" then return request(method, outgoing, callback, replied) end
+      return request(method, outgoing, function(err, result, id)
+        if not err then
+          if definition then
+            result = require("godot.shader_definition").correct(root, params, result, encoding)
+          else
+            result = shader.completion(params, result, encoding)
+          end
+        end
         callback(err, result, id)
       end, replied)
     end
     return rpc
   end
   vim.lsp.start({
-    name = "gdshader-lsp", cmd = command, root_dir = root,
-    on_init = function(client) encoding = client.offset_encoding end,
+    name = "gdshader-lsp", cmd = command, root_dir = workspace,
+    on_init = function(client)
+      encoding = client.offset_encoding
+      legacy = client.server_info and client.server_info.name == "gdshader-lsp" and client.server_info.version == "0.3.1"
+      if legacy then
+        client.flags.allow_incremental_sync = false
+        -- The release implements both requests but omits them from initialize.
+        client.server_capabilities.definitionProvider = true
+        client.server_capabilities.hoverProvider = true
+      end
+    end,
     on_attach = enable_completion,
     handlers = { ["textDocument/publishDiagnostics"] = function(err, params, ctx, config)
       if params and params.uri and vim.fn.has("win32") == 1 then

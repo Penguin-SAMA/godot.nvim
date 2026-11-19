@@ -13,9 +13,12 @@ local function attach(buf)
   local ft = vim.bo[buf].filetype
   if ft ~= "gdscript" and ft ~= "gdresource" and ft ~= "gdshader" then return end
   local root = M.root(buf)
-  if not root then return end
-  last_root = root
-  session.track(root)
+  if root then
+    last_root = root
+    session.track(root)
+  elseif ft ~= "gdshader" or vim.api.nvim_buf_get_name(buf) == "" then
+    return
+  end
   require("godot.editing").attach(buf, root)
 end
 

@@ -214,17 +214,17 @@ func _attach(root: Node, p: Dictionary) -> Dictionary:
 		return {"error": "A script is already attached to this node: " + current.resource_path}
 	if path in p.get("modified", []):
 		return {"error": "Save the modified Neovim buffer first: " + path}
-	var script: GDScript
-	if FileAccess.file_exists(path):
-		script = load(path) as GDScript
-		if not script or script.is_abstract() or not node.is_class(script.get_instance_base_type()):
-			return {"error": "Script cannot be attached to this node: " + path}
-	else:
-		script = GDScript.new()
-		script.source_code = "extends %s\n" % node.get_class()
-		if script.reload() != OK or ResourceSaver.save(script, path, ResourceSaver.FLAG_CHANGE_PATH) != OK:
+	if not FileAccess.file_exists(path):
+		var template := GDScript.new()
+		template.source_code = "extends %s\n" % node.get_class()
+		if template.reload() != OK or ResourceSaver.save(template, path) != OK:
 			return {"error": "Unable to create " + path + ". Choose an existing directory."}
 		EditorInterface.get_resource_filesystem().update_file(path)
+	# The generated template can still be pathless after saving. Attach the
+	# external resource so PackedScene keeps a link to the editable .gd file.
+	var script := load(path) as GDScript
+	if not script or script.resource_path != path or script.is_abstract() or not node.is_class(script.get_instance_base_type()):
+		return {"error": "Script cannot be attached to this node: " + path}
 	var undo := plugin.get_undo_redo()
 	undo.create_action("Attach " + path.get_file(), UndoRedo.MERGE_DISABLE, root)
 	undo.add_do_method(node, "set_script", script)
