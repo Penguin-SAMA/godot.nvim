@@ -58,7 +58,7 @@ static func _unsafe_path(edited: Node, source: Node, path: NodePath) -> bool:
 	return false
 
 
-static func _unsafe_value(edited: Node, source: Node, value: Variant, seen: Array, unknown_context := false) -> bool:
+static func _unsafe_value(edited: Node, source: Node, value: Variant, seen: Array, unknown_context := false, mixer_paths := false) -> bool:
 	if value is NodePath:
 		return not value.is_empty() if unknown_context else _unsafe_path(edited, source, value)
 	if value is Node:
@@ -69,9 +69,14 @@ static func _unsafe_value(edited: Node, source: Node, value: Variant, seen: Arra
 	if value is Script or value is PackedScene:
 		return false
 	for entry in seen:
-		if entry[0] == unknown_context and is_same(entry[1], value):
+		if entry[0] == unknown_context and entry[1] == mixer_paths and is_same(entry[2], value):
 			return false
-	seen.append([unknown_context, value])
+	seen.append([unknown_context, mixer_paths, value])
+	if value is AnimationLibrary:
+		for animation_name in value.get_animation_list():
+			if _unsafe_value(edited, source, value.get_animation(animation_name), seen, unknown_context, mixer_paths):
+				return true
+		return false
 	if value is Array or value is Dictionary:
 		for item in value:
 			if _unsafe_value(edited, source, item, seen, unknown_context):
@@ -83,6 +88,8 @@ static func _unsafe_value(edited: Node, source: Node, value: Variant, seen: Arra
 		# Track paths have a mixer-relative base. Key data does not: a key can
 		# assign a path or pass it to arbitrary code on a different node.
 		for track in value.get_track_count():
+			if not mixer_paths and not value.track_get_path(track).is_empty():
+				return true
 			for key in value.track_get_key_count(track):
 				if _unsafe_value(edited, source, value.track_get_key_value(track, key), seen, true):
 					return true
@@ -93,7 +100,9 @@ static func _unsafe_value(edited: Node, source: Node, value: Variant, seen: Arra
 static func _unsafe_properties(edited: Node, source: Node, object: Object, seen: Array, unknown_context := false) -> bool:
 	for property in object.get_property_list():
 		if property.usage & PROPERTY_USAGE_STORAGE:
-			if _unsafe_value(edited, source, object.get(property.name), seen, unknown_context):
+			# Only the mixer's native library slots establish a track base.
+			var mixer_paths := object is AnimationMixer and String(property.name).begins_with("libraries/")
+			if _unsafe_value(edited, source, object.get(property.name), seen, unknown_context, mixer_paths):
 				return true
 	return false
 
