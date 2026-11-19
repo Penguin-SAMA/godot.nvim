@@ -40,6 +40,12 @@ In Normal mode, press `<leader>G` (Space, then Shift+G in LazyVim). The keys bel
 | Run | `rm` run main scene · `rc` run current scene · `rs` stop · `ro` open output |
 | Debug | `db` toggle breakpoint · `dm` debug main scene · `dg` continue |
 
+### Editing the scene tree
+
+In the scene tree buffer, press `R` to rename the selected node, `d` to delete it and its subtree after confirmation, or `m` to choose a new parent in the same scene. The moved node is appended to the new parent's children. Press `u` to undo a scene edit in Godot.
+
+These edits require the Bridge add-on and a running graphical Godot editor. Only local, editable non-root nodes are supported. Edits that cross inheritance or instance boundaries, cannot preserve scene ownership, or cannot safely preserve scene references are rejected. Node names must be valid and unique among siblings. The Bridge also rejects edits when the scene has unsaved changes in Neovim or conflicts with the file on disk. It does not rewrite node paths in GDScript. Moves preserve global transforms for `Node2D` and `Node3D`, but a container can still change a child’s on-screen position.
+
 ## Optional tools
 
 - **Syntax and scene browsing** — install the Tree-sitter parsers with `:TSInstall gdscript godot_resource gdshader`.

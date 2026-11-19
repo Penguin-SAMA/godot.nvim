@@ -215,6 +215,40 @@ local function mappings(view)
       end)
     end)
   end)
+  local function structural_edit(key, desc, prompt)
+    map(key, desc, function()
+      local node = selected()
+      if not node or node.path == "." then return end
+      local revision = view.revision
+      prompt(node, function(method, args)
+        if views[view.buf] == view and view.revision == revision then change(method, args) end
+      end)
+    end)
+  end
+  structural_edit("R", "Rename Node", function(node, submit)
+    vim.ui.input({ prompt = "New node name: ", default = node.name }, function(name)
+      if name and name ~= "" and name ~= node.name then
+        submit("rename_node", { node = node.path, name = name })
+      end
+    end)
+  end)
+  structural_edit("d", "Delete Node and Subtree", function(node, submit)
+    vim.ui.select({ "Cancel", "Delete" }, { prompt = "Delete " .. node.path .. " and its subtree?" }, function(choice)
+      if choice == "Delete" then submit("delete_node", { node = node.path }) end
+    end)
+  end)
+  structural_edit("m", "Move Node to New Parent", function(node, submit)
+    local parent = node.path:match("^(.+)/[^/]+$") or "."
+    local candidates = vim.tbl_filter(function(candidate)
+      return candidate.path ~= parent and candidate.path ~= node.path
+        and candidate.path:sub(1, #node.path + 1) ~= node.path .. "/"
+    end, view.nodes)
+    if #candidates == 0 then return warn("No other parent nodes in this scene.") end
+    vim.ui.select(candidates, { prompt = "New parent for " .. node.path,
+      format_item = function(candidate) return candidate.path end }, function(destination)
+      if destination then submit("reparent_node", { node = node.path, parent = destination.path }) end
+    end)
+  end)
   map("u", "Undo Scene Change", function() change("undo", {}) end)
   map("r", "Refresh Scene Tree", function() refresh(view) end)
   map("q", "Close Scene Tree", function() sidebar.close(view.win) end)
