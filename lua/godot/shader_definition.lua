@@ -57,7 +57,7 @@ end
 
 -- Some gdshader-lsp versions report include-local rows against the caller URI.
 -- Verify the reported origin first. Follow only this shader's actual includes.
-function M.correct(root, params, result, encoding)
+function M.correct(root, params, result, encoding, legacy)
   local buf = vim.uri_to_bufnr(params.textDocument.uri)
   if not vim.api.nvim_buf_is_loaded(buf) then return result end
   local file = vim.fs.normalize(vim.api.nvim_buf_get_name(buf))
@@ -76,8 +76,10 @@ function M.correct(root, params, result, encoding)
   local name = (line:sub(1, byte):match("[%w_]*$") or "") .. (line:sub(byte + 1):match("^([%w_]*)%s*%(") or "")
   if name == "" or not line:find("%f[%w_]" .. name .. "%s*%(") then return result end
   local hit = type(result) == "table" and (result.uri and result or result[1])
+  if legacy and hit and require("godot.shader").is_overload_file(hit.uri) then return nil end
   if root and hit and hit.uri and vim.fs.normalize(vim.uri_to_fname(hit.uri)) ~= file then return result end
   local visited, matches = {}, {}
+  local declared_in_buffer = false
   local unresolved_resource = false
   local function walk(path, primary)
     local key = vim.fn.has("win32") == 1 and path:lower() or path
@@ -86,7 +88,7 @@ function M.correct(root, params, result, encoding)
     local source = contents(path)
     if not source then return end
     local includes, found = declarations(source, name)
-    if primary and #found > 0 then return end
+    if primary and #found > 0 then declared_in_buffer = true; return end
     for _, location in ipairs(found) do
       local row, col = unpack(location)
       local lines = vim.split(source, "\n", { plain = true })
@@ -106,6 +108,7 @@ function M.correct(root, params, result, encoding)
   end
   walk(file, true)
   if #matches > 0 then return matches end
+  if legacy and not declared_in_buffer and require("godot.shader").is_overload_location(name, hit) then return nil end
   -- Without a project, the server may have resolved res:// against its cwd
   -- and attributed a function from that unrelated file to the caller.
   if not unresolved_resource then return result end

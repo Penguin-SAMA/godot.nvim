@@ -10,6 +10,7 @@
 !/lua/
 !/lua/godot/
 !/lua/godot/*.lua
+!/lua/godot/shader_overloads.gdshaderinc
 
 !/addons/
 !/addons/nvim_bridge/
@@ -26,4 +27,7 @@
 !/fonts/generate.py
 !/fonts/requirements.txt
 !/fonts/README.md
+
+!/tests/
+!/tests/shader_compat.lua
 

@@ -221,6 +221,12 @@ local function attach_shader(buf, root)
   local publish = vim.lsp.handlers["textDocument/publishDiagnostics"]
   local shader = require("godot.shader")
   local encoding, legacy = "utf-16", false
+  local responses = {
+    ["textDocument/definition"] = function(params, result)
+      return require("godot.shader_definition").correct(root, params, result, encoding, legacy)
+    end,
+    ["textDocument/completion"] = function(params, result) return shader.completion(params, result, encoding) end,
+  }
   local function command(dispatch)
     local rpc = vim.lsp.rpc.start({ exe, "--stdio", "--log-path", "none" }, dispatch, { cwd = workspace })
     local request, notify = rpc.request, rpc.notify
@@ -228,17 +234,11 @@ local function attach_shader(buf, root)
       return notify(method, legacy and shader.legacy_params(params) or params)
     end
     rpc.request = function(method, params, callback, replied)
-      local definition = method == "textDocument/definition"
       local outgoing = legacy and shader.legacy_params(params) or params
-      if not definition and method ~= "textDocument/completion" then return request(method, outgoing, callback, replied) end
+      local adapt = responses[method]
+      if not adapt then return request(method, outgoing, callback, replied) end
       return request(method, outgoing, function(err, result, id)
-        if not err then
-          if definition then
-            result = require("godot.shader_definition").correct(root, params, result, encoding)
-          else
-            result = shader.completion(params, result, encoding)
-          end
-        end
+        if not err then result = adapt(params, result) end
         callback(err, result, id)
       end, replied)
     end
@@ -251,6 +251,10 @@ local function attach_shader(buf, root)
       legacy = client.server_info and client.server_info.name == "gdshader-lsp" and client.server_info.version == "0.3.1"
       if legacy then
         client.flags.allow_incremental_sync = false
+        responses["textDocument/formatting"] = shader.legacy_format
+        responses["textDocument/rename"] = shader.legacy_rename
+        responses["workspace/symbol"] = shader.legacy_symbols
+        shader.open_overloads(client)
         -- The release implements both requests but omits them from initialize.
         client.server_capabilities.definitionProvider = true
         client.server_capabilities.hoverProvider = true
@@ -260,6 +264,10 @@ local function attach_shader(buf, root)
     handlers = { ["textDocument/publishDiagnostics"] = function(err, params, ctx, config)
       if params and params.uri and vim.fn.has("win32") == 1 then
         params.uri = params.uri:gsub("%%5[cC]", "/"):gsub("%%3[aA]", ":")
+      end
+      if legacy and params and params.uri and params.diagnostics then
+        if shader.is_overload_file(params.uri) then return end
+        shader.legacy_diagnostics(params, encoding)
       end
       return publish(err, params, ctx, config)
     end },
