@@ -102,7 +102,7 @@ local function enable(original)
   return nil, "Cannot parse editor_plugins/enabled. Enable Neovim Bridge in Godot's Plugins settings."
 end
 
-function M.run(root)
+local function install(root)
   local project_file = root .. "/project.godot"
   local modified = {}
   for _, buf in ipairs(vim.api.nvim_list_bufs()) do
@@ -113,7 +113,9 @@ function M.run(root)
   if modified[project.key(project_file)] then return nil, "Save the modified project.godot buffer before installing" end
   local original = read(project_file)
   if not original then return nil, "Cannot read " .. project_file end
-  local updated, err = enable(original .. (original:match("\n$") and "" or "\n"))
+  local terminated = original .. (original:match("\n$") and "" or "\n")
+  local updated, err = enable(terminated)
+  if updated == terminated then updated = original end
   if not updated then return nil, err end
   local source = vim.api.nvim_get_runtime_file("addons/nvim_bridge/plugin.cfg", false)[1]
   if not source then return nil, "Bundled Godot add-on is missing" end
@@ -169,6 +171,21 @@ function M.run(root)
     end
   end
   return true
+end
+
+function M.run(root)
+  local release = project.lock(root, "bridge-install")
+  if not release then
+    vim.wait(2000, function()
+      release = project.lock(root, "bridge-install")
+      return release ~= nil
+    end, 20)
+  end
+  if not release then return nil, "Another Neovim is installing the project bridge. Retry :GodotBridgeInstall." end
+  local success, ok, err = pcall(install, root)
+  release()
+  if not success then return nil, tostring(ok) end
+  return ok, err
 end
 
 return M

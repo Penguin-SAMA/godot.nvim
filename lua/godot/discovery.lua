@@ -17,7 +17,7 @@ local function argv(command)
   return result
 end
 
-local function describe(root, process)
+local function describe(root, process, advertised)
   if type(process.command) ~= "string" or type(process.exe) ~= "string" then return end
   local args = argv(process.command)
   local editor, dir, headless, lsp, dap = false, nil, false, 6005, 6006
@@ -34,6 +34,11 @@ local function describe(root, process)
     end
   end
   -- A relative --path is relative to the other process's cwd, not ours.
+  if advertised and process.pid == advertised.pid and not dir then
+    -- Project-manager launches do not always include --path. The live add-on
+    -- record identifies the editor, and Windows supplies the actual binary.
+    return vim.tbl_extend("force", advertised, { executable = process.exe })
+  end
   if not editor or not dir then return end
   local absolute = dir:match("^%a:[/\\]") or dir:match("^[/\\][/\\]")
   if not absolute or project.key(dir) ~= project.key(root) then return end
@@ -41,7 +46,7 @@ local function describe(root, process)
     mode = headless and "headless" or "editor", lsp_port = lsp, dap_port = dap }
 end
 
-function M.find(root, callback)
+function M.find(root, callback, advertised)
   if vim.fn.has("win32") ~= 1 then return callback({}) end
   local script = [[
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
@@ -63,7 +68,7 @@ ConvertTo-Json -InputObject $found -Compress
       local ok, list = pcall(vim.json.decode, res.stdout or "")
       if res.code == 0 and ok and type(list) == "table" then
         for _, p in ipairs(list) do
-          local s = describe(root, p)
+          local s = describe(root, p, advertised)
           if s then found[#found + 1] = s end
         end
       end

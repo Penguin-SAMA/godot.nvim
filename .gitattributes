@@ -1,3 +1,4 @@
 # Bridge installation compares the bundled files with existing copies byte for byte.
 /addons/nvim_bridge/* -text
 *.ttf binary
+*.dll binary

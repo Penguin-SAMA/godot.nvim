@@ -2,7 +2,8 @@ local M = {}
 local scene = require("godot.scene_index")
 local semantic = require("godot.semantic")
 local docs = require("godot.docs")
-local options = function() return require("godot.config").options end
+local config = require("godot.config")
+local tools = require("godot.tools")
 local function warn(message) vim.notify("godot.nvim: " .. message, vim.log.levels.WARN) end
 
 local function line_at(buf, row)
@@ -11,7 +12,7 @@ end
 
 local function enable_completion(client, buf)
   local provider = client.server_capabilities.completionProvider
-  if provider and options().native_completion ~= false and not package.loaded["blink.cmp"] and not package.loaded.cmp then
+  if provider and config.options.native_completion ~= false and not package.loaded["blink.cmp"] and not package.loaded.cmp then
     local completeopt = vim.api.nvim_get_option_value("completeopt", { buf = buf })
     if completeopt == "" then completeopt = vim.go.completeopt end
     if completeopt == vim.api.nvim_get_option_info2("completeopt", {}).default then
@@ -68,7 +69,9 @@ local function local_server(capabilities, handlers)
   end
 end
 
-local function start_local(buf, root, ft)
+local scene_highlighters = setmetatable({}, { __mode = "v" })
+
+local function start_local(buf, root, ft, cached_only)
   local is_scene = ft == "gdresource"
   local name = is_scene and "godot-scene" or "godot-semantic"
   local existing = vim.lsp.get_clients({ name = name, bufnr = buf })[1]
@@ -77,10 +80,15 @@ local function start_local(buf, root, ft)
   vim.treesitter.language.register(lang, ft)
   local parser = vim.treesitter.get_parser(buf, lang, { error = false })
   if not parser then
-    vim.notify_once("godot.nvim: install the " .. lang .. " Tree-sitter parser (:checkhealth godot)", vim.log.levels.WARN)
+    if not is_scene then
+      vim.notify_once("godot.nvim: install the " .. lang .. " Tree-sitter parser (:checkhealth godot)", vim.log.levels.WARN)
+    end
     return
   end
-  pcall(vim.treesitter.start, buf, lang)
+  if not vim.treesitter.highlighter.active[buf] then
+    pcall(vim.treesitter.start, buf, lang)
+    if is_scene then scene_highlighters[buf] = vim.treesitter.highlighter.active[buf] end
+  end
   local api
   local capabilities, handlers
   if is_scene then
@@ -102,6 +110,7 @@ local function start_local(buf, root, ft)
   end
   local id = vim.lsp.start({
     name = name, root_dir = root, cmd = local_server(capabilities, handlers), on_attach = enable_completion,
+    godot_scene = is_scene,
   }, { bufnr = buf })
   if id then
     docs.load(function(loaded, err)
@@ -111,7 +120,7 @@ local function start_local(buf, root, ft)
       if loaded and not is_scene and client and client.initialized then
         for b in pairs(client.attached_buffers) do vim.lsp.semantic_tokens.force_refresh(b) end
       end
-    end, is_scene)
+    end, is_scene or cached_only, root)
   end
 end
 
@@ -169,9 +178,10 @@ end
 
 local function attach_gd(buf, root)
   require("godot.session").ensure(root, "language", function(err, session)
-    if err then warn(tostring(err)); return end
     if not vim.api.nvim_buf_is_loaded(buf) or vim.bo[buf].filetype ~= "gdscript" then return end
     if require("godot.project").root(vim.api.nvim_buf_get_name(buf)) ~= root then return end
+    start_local(buf, root, "gdscript", err ~= nil)
+    if err then warn(tostring(err)); return end
     local port = session.lsp_port
     local encoding = "utf-16"
     local function connect(dispatch, config)
@@ -209,15 +219,23 @@ local function attach_gd(buf, root)
   end)
 end
 
+local function shader_formatting(client)
+  for capability, enabled in pairs(client.config.godot_formatting or {}) do
+    client.server_capabilities[capability] = config.enabled("formatting") and enabled or false
+  end
+end
+
 local function attach_shader(buf, root)
   pcall(vim.treesitter.start, buf, "gdshader")
+  if not config.enabled("shader_lsp") then return end
   local dir = vim.fs.dirname(vim.api.nvim_buf_get_name(buf))
   local workspace = root or vim.fs.root(buf, ".git") or dir
-  local exe = options().shader_lsp
-  if vim.fn.executable(exe) ~= 1 then
-    vim.notify_once("godot.nvim: gdshader-lsp executable unavailable: " .. exe, vim.log.levels.WARN)
+  local tool = tools.status("shader_lsp", root)
+  if tool.state ~= "ready" then
+    if tool.state == "failed" then vim.notify_once("godot.nvim: " .. tool.message, vim.log.levels.WARN) end
     return
   end
+  local exe = tool.path
   local publish = vim.lsp.handlers["textDocument/publishDiagnostics"]
   local shader = require("godot.shader")
   local encoding, legacy = "utf-16", false
@@ -244,10 +262,15 @@ local function attach_shader(buf, root)
     end
     return rpc
   end
-  vim.lsp.start({
-    name = "gdshader-lsp", cmd = command, root_dir = workspace,
+  return vim.lsp.start({
+    name = "gdshader-lsp", cmd = command, root_dir = workspace, godot_shader_path = exe, godot_project = root,
     on_init = function(client)
       encoding = client.offset_encoding
+      client.config.godot_formatting = {
+        documentFormattingProvider = client.server_capabilities.documentFormattingProvider,
+        documentRangeFormattingProvider = client.server_capabilities.documentRangeFormattingProvider,
+      }
+      shader_formatting(client)
       legacy = client.server_info and client.server_info.name == "gdshader-lsp" and client.server_info.version == "0.3.1"
       if legacy then
         client.flags.allow_incremental_sync = false
@@ -271,7 +294,10 @@ local function attach_shader(buf, root)
       end
       return publish(err, params, ctx, config)
     end },
-  }, { bufnr = buf })
+  }, { bufnr = buf, reuse_client = function(client, requested)
+    return not client:is_stopped() and client.name == requested.name and client.root_dir == workspace
+      and client.config.godot_shader_path == exe
+  end })
 end
 
 local function gd_definition(buf)
@@ -301,11 +327,13 @@ end
 function M.attach(buf, root)
   if buf == 0 then buf = vim.api.nvim_get_current_buf() end
   local ft = vim.bo[buf].filetype
-  if ft == "gdscript" or ft == "gdresource" then
+  if ft == "gdscript" then
+    attach_gd(buf, root)
+  elseif ft == "gdresource" then
+    if not config.enabled("scene_tree") then return end
     start_local(buf, root, ft)
-    if ft == "gdscript" then attach_gd(buf, root) end
   elseif ft == "gdshader" then
-    attach_shader(buf, root)
+    if not attach_shader(buf, root) then return end
   else
     return
   end
@@ -316,6 +344,40 @@ function M.attach(buf, root)
       end, { buffer = buf, desc = "Godot definition" })
     end
   end)
+end
+
+function M.reconfigure()
+  if not config.enabled("scene_tree") then
+    for _, client in ipairs(vim.lsp.get_clients({ name = "godot-scene" })) do
+      if client.config.godot_scene then client:stop(true) end
+    end
+    for buf, highlighter in pairs(scene_highlighters) do
+      if vim.treesitter.highlighter.active[buf] == highlighter then vim.treesitter.stop(buf) end
+      scene_highlighters[buf] = nil
+    end
+  end
+  for _, client in ipairs(vim.lsp.get_clients({ name = "gdshader-lsp" })) do
+    if client.config.godot_shader_path then
+      if config.enabled("shader_lsp") and tools.path("shader_lsp", client.config.godot_project) == client.config.godot_shader_path then
+        shader_formatting(client)
+      else
+        client:stop(true)
+      end
+    end
+  end
+  local disabled = { gdshader = not config.enabled("shader_lsp"), gdresource = not config.enabled("scene_tree") }
+  if disabled.gdshader or disabled.gdresource then
+    for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+      if vim.api.nvim_buf_is_loaded(buf) and disabled[vim.bo[buf].filetype] then
+        vim.api.nvim_buf_call(buf, function()
+          local mapping = vim.fn.maparg("gd", "n", false, true)
+          if mapping.buffer == 1 and mapping.desc == "Godot definition" then
+            vim.keymap.del("n", "gd", { buffer = buf })
+          end
+        end)
+      end
+    end
+  end
 end
 
 function M.doc(buf, query)
@@ -339,7 +401,7 @@ function M.doc(buf, query)
       if not vim.api.nvim_buf_is_valid(buf) or vim.api.nvim_get_current_buf() ~= buf then return end
       local text = api and docs.lookup(api, query, base)
       if text then docs.preview(text) else warn(err or ("No official documentation for " .. query)) end
-    end)
+    end, false, require("godot").root(buf))
   end
   local client = vim.lsp.get_clients({ bufnr = buf, name = "godot-gdscript" })[1]
   if client and (class or base) then
@@ -356,25 +418,30 @@ function M.doc(buf, query)
 end
 
 function M.format(buf)
+  if not config.require_feature("formatting") then return end
   if buf == 0 then buf = vim.api.nvim_get_current_buf() end
-  local ft, opts = vim.bo[buf].filetype, options()
-  local cmd
+  local ft = vim.bo[buf].filetype
+  local id, args
   if ft == "gdscript" then
-    cmd = { opts.gdscript_formatter, "--stdout" }
+    id, args = "gdscript_formatter", { "--stdout" }
   elseif ft == "gdshader" then
-    cmd = { opts.clang_format, "--assume-filename=shader.cpp",
+    id, args = "clang_format", { "--assume-filename=shader.cpp",
       "--style={BasedOnStyle: LLVM, UseTab: Always, IndentWidth: 4, TabWidth: 4, SortIncludes: Never}" }
   else
     warn("Godot saves the scene format")
     return
   end
-  if vim.fn.executable(cmd[1]) ~= 1 then warn("Formatter unavailable: " .. cmd[1]); return end
+  local status = tools.status(id, require("godot").root(buf))
+  if status.state ~= "ready" then
+    return warn(status.message or "Formatter is being prepared. Retry :GodotFormat after it is ready.")
+  end
+  local cmd = vim.list_extend({ status.path }, args)
   local tick = vim.api.nvim_buf_get_changedtick(buf)
   local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
   vim.system(cmd, { stdin = table.concat(lines, "\n") .. "\n", text = true,
     cwd = vim.fs.dirname(vim.api.nvim_buf_get_name(buf)), timeout = 15000,
   }, vim.schedule_wrap(function(result)
-    if ft == "gdscript" and result.code == 2 then return end
+    if not config.enabled("formatting") or (ft == "gdscript" and result.code == 2) then return end
     if result.code ~= 0 then
       warn(vim.trim(result.stderr or "") ~= "" and vim.trim(result.stderr) or ("Formatter exited " .. result.code))
       return

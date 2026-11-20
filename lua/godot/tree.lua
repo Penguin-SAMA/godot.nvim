@@ -1,10 +1,11 @@
-local bridge = require("godot.bridge")
+local config = require("godot.config")
 local project = require("godot.project")
 local outline = require("godot.outline")
 local sidebar = require("godot.sidebar")
 local api = vim.api
 local M = {}
 local views = {}
+local generation = 0
 
 local function warn(message)
   vim.notify("godot.nvim: " .. message, vim.log.levels.WARN)
@@ -107,8 +108,11 @@ local function drop(view, node, pos, declaration)
 end
 
 local function call(view, method, args, callback)
+  if not config.require_feature("bridge") or views[view.buf] ~= view then return end
   args.scene = view.scene
-  bridge.call(view.root, method, args, function(err, result)
+  local request = generation
+  require("godot.bridge").call(view.root, method, args, function(err, result)
+    if request ~= generation then return end
     if err then return warn(err) end
     if vim.api.nvim_buf_is_valid(view.buf) then callback(result) end
   end)
@@ -119,16 +123,20 @@ local function read_scene(root, scene, done)
   local buf = file and vim.fn.bufnr(file)
   local modified = buf and buf ~= -1 and vim.bo[buf].modified
   if file and not modified and not vim.uv.fs_stat(file) then return done("Scene not found: " .. scene) end
-  local has_bridge = vim.uv.fs_stat(root .. "/addons/nvim_bridge/plugin.cfg")
+  local has_bridge = config.enabled("bridge") and vim.uv.fs_stat(root .. "/addons/nvim_bridge/plugin.cfg")
   local editor = has_bridge and project.read(root .. "/.godot/godot-nvim-editor.json")
-  if file and file:lower():match("%.tscn$") and (modified or not (editor and project.alive(editor.pid))) then
+  local live = has_bridge and (require("godot.bridge").connected(root) or (editor and project.alive(editor.pid)))
+  if file and file:lower():match("%.tscn$") and (modified or not live) then
+    local parser = require("godot.tools").status("scene_tree")
+    if parser.state ~= "ready" then return done(parser.message) end
     local nodes, err = require("godot.scene_index").file_nodes(file, root)
     if nodes and #nodes > 0 then return done(nil, nodes, scene) end
-    if modified or not has_bridge then
-      return done(("Could not read nodes in %s: %s"):format(scene, err or "Scene has no root node"))
-    end
+    return done(("Could not read nodes in %s: %s"):format(scene, err or "Scene has no root node"))
   end
-  bridge.call(root, "scene_tree", { scene = scene }, function(err, info)
+  if not config.enabled("bridge") then
+    return done("Open a .tscn file or a script attached to one to browse offline. Enable features.bridge for a live editor scene.")
+  end
+  require("godot.bridge").call(root, "scene_tree", { scene = scene }, function(err, info)
     if err then return done(err) end
     local nodes = {}
     local saved
@@ -165,13 +173,10 @@ local function refresh(view)
   end)
 end
 
-local function mappings(view)
-  local function map(key, desc, cb, extra)
-    vim.keymap.set("n", key, cb, vim.tbl_extend("force", { buffer = view.buf, desc = desc, silent = true }, extra or {}))
+local function edit_mappings(view)
+  local function map(key, desc, cb)
+    vim.keymap.set("n", key, cb, { buffer = view.buf, desc = desc, silent = true })
   end
-  views[view.buf] = view
-  vim.api.nvim_create_autocmd("BufWipeout", { buffer = view.buf, once = true,
-    callback = function() views[view.buf] = nil end })
   local function selected()
     return view.rows[vim.api.nvim_win_get_cursor(0)[1]]
   end
@@ -255,6 +260,20 @@ local function mappings(view)
     end)
   end)
   map("u", "Undo Scene Change", function() change("undo", {}) end)
+end
+
+local function mappings(view)
+  local function map(key, desc, cb, extra)
+    vim.keymap.set("n", key, cb, vim.tbl_extend("force", { buffer = view.buf, desc = desc, silent = true }, extra or {}))
+  end
+  views[view.buf] = view
+  vim.api.nvim_create_autocmd("BufWipeout", { buffer = view.buf, once = true,
+    callback = function() views[view.buf] = nil end })
+  local function selected()
+    return view.rows[vim.api.nvim_win_get_cursor(0)[1]]
+  end
+  view.bridge = config.enabled("bridge")
+  if view.bridge then edit_mappings(view) end
   map("r", "Refresh Scene Tree", function() refresh(view) end)
   map("q", "Close Scene Tree", function() sidebar.close(view.win) end)
   local function fold(how) return function() outline.fold(view, how) end end
@@ -267,7 +286,7 @@ local function mappings(view)
     local node = selected()
     if not node or not node.script or node.script == "" then return end
     if vim.api.nvim_win_is_valid(view.origin) then vim.api.nvim_set_current_win(view.origin) end
-    bridge.resource(view.root, node.script)
+    require("godot.bridge").resource(view.root, node.script)
   end)
   local function insert_at_cursor(declaration)
     local node = selected()
@@ -349,14 +368,16 @@ local function present(view, nodes, tab)
 end
 
 function M.open(root, arg)
+  if not config.require_feature("scene_tree") then return end
   local source, origin, tab = api.nvim_get_current_buf(), api.nvim_get_current_win(), api.nvim_get_current_tabpage()
   local file = api.nvim_buf_get_name(source)
   local previous = views[source]
   local view = { root = root, origin = previous and previous.origin or origin, nodes = {}, rows = {}, revision = 0 }
   local request = (vim.t[tab].godot_tree_request or 0) + 1
+  local initial_generation = generation
   vim.t[tab].godot_tree_request = request
   local function pending()
-    return api.nvim_get_current_tabpage() == tab and vim.t[tab].godot_tree_request == request
+    return initial_generation == generation and api.nvim_get_current_tabpage() == tab and vim.t[tab].godot_tree_request == request
       and api.nvim_win_is_valid(origin) and api.nvim_win_get_buf(origin) == source
   end
   local function finish(err, nodes, scene)
@@ -374,6 +395,11 @@ function M.open(root, arg)
     if not scene then return finish("Choose a scene in " .. root) end
     load(scene)
   elseif file:lower():match("%.gd$") then
+    local parser = require("godot.tools").status("scene_tree")
+    if parser.state ~= "ready" then
+      finish(parser.message or "Scene parser is being prepared. Retry :GodotTree when it is ready.")
+      return
+    end
     require("godot.scene_lookup").find(root, file, function(err, scenes)
       if not pending() then return end
       if err then return finish(err) end
@@ -389,6 +415,26 @@ function M.open(root, arg)
     load(previous and previous.scene or nil)
   end
   return view
+end
+
+function M.reconfigure()
+  generation = generation + 1
+  local enabled = config.enabled("bridge")
+  for _, view in pairs(views) do
+    if not config.enabled("scene_tree") or (not enabled and not (view.scene or ""):lower():match("%.tscn$")) then
+      sidebar.close(view.win)
+    elseif view.bridge ~= enabled then
+      view.bridge = enabled
+      if enabled then
+        edit_mappings(view)
+      else
+        for _, key in ipairs({ "a", "s", "c", "R", "d", "m", "u" }) do
+          pcall(vim.keymap.del, "n", key, { buffer = view.buf })
+        end
+        refresh(view)
+      end
+    end
+  end
 end
 
 return M

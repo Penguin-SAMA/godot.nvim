@@ -1,8 +1,11 @@
 local M = {}
 local uv = vim.uv
 local project = require("godot.project")
+local config = require("godot.config")
 local clients = {}
 local connecting = {}
+local installations = {}
+local activation_hint = "Enable Neovim Bridge under Project Settings > Plugins (Addons), or reopen this Godot project."
 local changing = {
   add_node = true,
   rename_node = true,
@@ -17,13 +20,42 @@ local function report(err)
   vim.notify("godot.nvim: " .. err, vim.log.levels.WARN)
 end
 
-function M.install(root)
-  local ok, err = require("godot.bridge_install").run(root)
+function M.status(root)
+  if not config.enabled("bridge") then return { state = "disabled" } end
+  return (root and installations[project.key(root)]) or { state = "pending", message = "Open a Godot project" }
+end
+
+function M.prepare(root, retry)
+  if not config.enabled("bridge") then return end
+  local key = project.key(root)
+  local status = installations[key]
+  if status and (not retry or status.state == "pending") then return status.state == "ready", status.message end
+  status = { state = "pending" }
+  installations[key] = status
+  local success, ok, err = pcall(require("godot.bridge_install").run, root)
+  if not success then err, ok = tostring(ok), nil end
+  status.state = ok and "ready" or "failed"
+  status.path = root .. "/addons/nvim_bridge"
+  status.message = err
   if ok then
-    vim.notify("Godot bridge enabled. Restart any editor already open for this project.")
+    local session = require("godot.session")
+    if not session.advertised_editor(root) then
+      session.find_editor(root, function(editor)
+        if installations[key] == status and config.enabled("bridge") and editor and not session.advertised_editor(root) then
+          vim.notify("Godot is already open for " .. root .. ". " .. activation_hint)
+        end
+      end)
+    end
   else
-    report(err)
+    report(tostring(err) .. " Retry with :GodotBridgeInstall.")
   end
+  return ok, err
+end
+
+function M.install(root)
+  if not config.require_feature("bridge") then return end
+  local ok, err = M.prepare(root, true)
+  if ok then vim.notify("Godot bridge configured for " .. root) end
   return ok, err
 end
 
@@ -160,8 +192,14 @@ local function connect(s, token, callback)
 end
 
 function M.connected(root)
+  if not config.enabled("bridge") then return false end
   local c = clients[project.key(root)]
   return c ~= nil and c.ready == true
+end
+
+function M.disable()
+  installations = {}
+  for _, c in pairs(clients) do stop(c, "Godot bridge disabled") end
 end
 
 function M.run_state(key)
@@ -192,6 +230,8 @@ local function request(c, method, params, callback)
 end
 
 local function with_session(root, s, callback)
+  if not config.enabled("bridge") then return callback("Enable opts.features.bridge to use the Godot bridge.") end
+  if s and s.mode == "editor" and not s.bridge_port then return callback(activation_hint) end
   local key = project.key(root)
   if not s or type(s.root) ~= "string" or project.key(s.root) ~= key or type(s.pid) ~= "number"
       or type(s.bridge_port) ~= "number" or s.bridge_port < 1 or s.bridge_port > 65535 then
@@ -215,6 +255,7 @@ local function with_session(root, s, callback)
   local file = root .. "/.godot/godot-nvim-bridge-" .. s.pid .. ".key"
   local deadline = uv.now() + 5500
   local function try()
+    if not config.enabled("bridge") then return finish("Godot bridge disabled") end
     local f = io.open(file, "rb")
     local token
     if f then token = f:read("*a"); f:close() end
@@ -223,6 +264,7 @@ local function with_session(root, s, callback)
       return finish("Godot bridge is inactive. Enable Neovim Bridge in project settings and restart Godot.")
     end
     require("godot.ports").owners(function(owners)
+      if not config.enabled("bridge") then return finish("Godot bridge disabled") end
       if owners[s.bridge_port] ~= s.pid then
         return finish("Bridge port does not belong to this Godot editor")
       end
@@ -233,12 +275,13 @@ local function with_session(root, s, callback)
 end
 
 function M.subscribe(root, session, callback)
-  if not session or session.mode ~= "editor" then return end
+  if not config.enabled("bridge") or not session or session.mode ~= "editor" then return end
   with_session(root, session, callback or function() end)
 end
 
 function M.call(root, method, params, callback)
   callback = callback or function(err) if err then report(err) end end
+  if not config.enabled("bridge") then return callback("Enable opts.features.bridge to use the Godot bridge.") end
   local client = clients[project.key(root)]
   if method == "run_action" and client and client.ready and client.run_controls then
     return request(client, method, params, callback)
@@ -294,14 +337,16 @@ function M.resource(root, arg, callback)
     return
   end
   local script = vim.api.nvim_get_runtime_file("scripts/resolve_uid.gd", false)[1]
-  local executable = require("godot.config").options.executable
-  local ok, err = pcall(vim.system, { executable, "--headless", "--path", root, "--script", script, "--", path },
-    { cwd = root, text = true, timeout = 15000 }, vim.schedule_wrap(function(proc)
-      local res = (proc.stdout or ""):match("GODOT_NVIM_RESOURCE=([^\r\n]+)")
-      if proc.code ~= 0 or not res then return callback("Cannot locate resource: " .. path .. ". Open or import the project in Godot.") end
-      open(res)
-    end))
-  if not ok then callback(tostring(err)) end
+  require("godot.session").engine(root, function(why, executable)
+    if why then return callback(why) end
+    local ok, err = pcall(vim.system, { executable, "--headless", "--path", root, "--script", script, "--", path },
+      { cwd = root, text = true, timeout = 15000 }, vim.schedule_wrap(function(proc)
+        local res = (proc.stdout or ""):match("GODOT_NVIM_RESOURCE=([^\r\n]+)")
+        if proc.code ~= 0 or not res then return callback("Cannot locate resource: " .. path .. ". Open or import the project in Godot.") end
+        open(res)
+      end))
+    if not ok then callback(tostring(err)) end
+  end)
 end
 
 return M

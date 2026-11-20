@@ -43,12 +43,10 @@ end
 
 -- Each executable revision has its own cache. The dump's cwd is private, since
 -- Godot always writes the same filename and multiple editors may start together.
-function M.load(callback, cached_only)
-  local configured = require("godot.config").options.executable
-  local exe = vim.fn.exepath(configured)
-  if exe == "" then return callback(nil, not cached_only and ("Godot executable unavailable: " .. configured) or nil) end
+local function load_executable(exe, callback, cached_only)
   exe = vim.uv.fs_realpath(exe) or exe
   local stat = vim.uv.fs_stat(exe)
+  if not stat then return callback(nil, not cached_only and ("Godot executable unavailable: " .. exe) or nil) end
   local key = vim.fn.sha256(table.concat({ exe, stat.size, stat.mtime.sec, stat.mtime.nsec }, ":"))
   local cache = caches[key]
   if cache then
@@ -85,6 +83,14 @@ function M.load(callback, cached_only)
     vim.fn.delete(work, "rf")
     finish(nil, tostring(launch_err))
   end
+end
+
+function M.load(callback, cached_only, root)
+  root = root or require("godot").health_root()
+  require("godot.session").engine(root, function(err, exe)
+    if not exe then return callback(nil, not cached_only and err or nil) end
+    load_executable(exe, callback, cached_only)
+  end, cached_only)
 end
 
 function M.member(api, class_name, symbol)

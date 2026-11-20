@@ -1,9 +1,11 @@
 local M = {}
 local api = vim.api
+local config = require("godot.config")
 local prefix = "<leader>G"
 local categories = { p = "Project", e = "Editing", s = "Scene Tree", r = "Run", d = "Debug" }
 local godot_files = { gdscript = true, gdresource = true, gdshader = true }
 local which_key
+local bindings = {}
 
 local function command(name, arg)
   return function()
@@ -29,9 +31,17 @@ local function groups(root, buf)
     { "h", "Show Docs at Cursor", command("GodotDoc") },
     project_action("g", "Open Resource at Cursor", "GodotResource"),
   }
-  if ft == "gdscript" or ft == "gdshader" then
+  if config.enabled("formatting") and (ft == "gdscript" or ft == "gdshader") then
     table.insert(editing, { "f", "Format File", command("GodotFormat") })
   end
+  local result = {
+    { "p", categories.p, { health, project_action("o", "Open Godot Editor", "GodotOpen") } },
+    { "e", categories.e, editing },
+  }
+  if config.enabled("scene_tree") then
+    table.insert(result, { "s", categories.s, { project_action("o", "Open Scene Tree", "GodotTree") } })
+  end
+  if not config.enabled("dap") then return result end
   local debug = {
     project_action("m", "Debug Main Scene", "GodotDebug", "main"),
     project_action("g", "Continue", "GodotDebugAction", "continue"),
@@ -39,47 +49,53 @@ local function groups(root, buf)
   if ft == "gdscript" then
     table.insert(debug, { "b", "Toggle Breakpoint", command("GodotDebugAction", "toggle_breakpoint") })
   end
-  return {
-    { "p", categories.p, { health, project_action("o", "Open Godot Editor", "GodotOpen") } },
-    { "e", categories.e, editing },
-    { "s", categories.s, { project_action("o", "Open Scene Tree", "GodotTree") } },
-    { "r", categories.r, {
+  table.insert(result, { "r", categories.r, {
       project_action("m", "Run Main Scene", "GodotRun", "main"),
       project_action("c", "Run Current Scene", "GodotRun", "current"),
       project_action("s", "Stop Game", "GodotStop"),
       project_action("o", "Open Output", "GodotOutput"),
-    } },
-    { "d", categories.d, debug },
-  }
+  } })
+  table.insert(result, { "d", categories.d, debug })
+  return result
 end
 
 function M.setup()
+  local group = api.nvim_create_augroup("GodotNvimKeys", { clear = true })
+  local function clear(buf)
+    if bindings[buf] and api.nvim_buf_is_valid(buf) then
+      for _, lhs in ipairs(bindings[buf].keys) do
+        pcall(vim.keymap.del, "n", lhs, { buffer = buf })
+      end
+    end
+    bindings[buf] = nil
+  end
+  for buf in pairs(bindings) do clear(buf) end
   local ok, wk = pcall(require, "which-key")
   if not ok or type(wk.add) ~= "function" then
+    which_key = nil
     if vim.fn.maparg(prefix, "n") == "" then
       vim.keymap.set("n", prefix, "<Cmd>GodotMenu<CR>", { silent = true, desc = "Open Godot Menu" })
     end
     return
   end
-  which_key = wk
-  local spec = { { prefix, group = "Godot", icon = { icon = "", color = "blue" } } }
-  for key, name in pairs(categories) do
-    spec[#spec + 1] = { prefix .. key, group = name }
+  if which_key ~= wk then
+    if vim.fn.maparg(prefix, "n") == "<Cmd>GodotMenu<CR>" then vim.keymap.del("n", prefix) end
+    local spec = { { prefix, group = "Godot", icon = { icon = "", color = "blue" } } }
+    for key, name in pairs(categories) do
+      spec[#spec + 1] = { prefix .. key, group = name }
+    end
+    wk.add(spec)
+    which_key = wk
   end
-  wk.add(spec)
   local health_key = prefix .. "p" .. health[1]
   vim.keymap.set("n", health_key, health[3], { desc = health[2], silent = true })
 
-  local bindings = {}
   local function update(buf)
     local root, ft = require("godot").root(buf), vim.bo[buf].filetype
     local previous = bindings[buf]
     if previous then
       if previous.root == root and previous.ft == ft then return end
-      for _, lhs in ipairs(previous.keys) do
-        pcall(vim.keymap.del, "n", lhs, { buffer = buf })
-      end
-      bindings[buf] = nil
+      clear(buf)
     end
     if not root and not godot_files[ft] then return end
     local keys = {}
@@ -94,7 +110,6 @@ function M.setup()
     end
     bindings[buf] = { root = root, ft = ft, keys = keys }
   end
-  local group = api.nvim_create_augroup("GodotNvimKeys", { clear = true })
   api.nvim_create_autocmd({ "BufEnter", "BufFilePost", "FileType" }, {
     group = group, callback = function(event) update(event.buf) end,
   })

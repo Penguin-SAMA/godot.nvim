@@ -46,36 +46,12 @@ end
 
 -- Only protect the short read/spawn/publish sequence across nvim instances.
 -- The (possibly lengthy) project import and service startup run outside the lock.
-local function lock(root)
-  local file = project.directory(root) .. "/session.lock"
-  local fd = uv.fs_open(file, "wx", 384)
-  if not fd then
-    local s = project.read(file)
-    local stat = uv.fs_stat(file)
-    if (s and not project.alive(s.pid)) or (not s and stat and os.time() - stat.mtime.sec > 5) then
-      uv.fs_unlink(file)
-    end
-    return
-  end
-  uv.fs_write(fd, vim.json.encode({ pid = uv.os_getpid() }), 0)
-  uv.fs_close(fd)
-  return function() uv.fs_unlink(file) end
-end
-
 function M.track(root)
   project.track(root)
   tracked[project.key(root)] = root
 end
 
-local function launch(root, mode)
-  local options = require("godot.config").options
-  local executable = vim.fn.exepath(options.executable)
-  assert(executable ~= "", "Godot executable not found: " .. options.executable)
-  executable = project.normalize(executable)
-  -- The official Windows console launcher forks the actual editor. Track
-  -- the listener-owning binary so lifecycle checks use the right PID.
-  local editor_exe, suffix = executable:gsub("_[Cc][Oo][Nn][Ss][Oo][Ll][Ee]%.[Ee][Xx][Ee]$", ".exe")
-  if suffix > 0 and uv.fs_stat(editor_exe) then executable = editor_exe end
+local function launch(root, mode, executable)
   local available = ports.allocate(4)
   local s = {
     root = root, mode = mode, lsp_port = available[1], dap_port = available[2],
@@ -124,8 +100,64 @@ function M.instances(root)
   return candidates(root, "language")
 end
 
+-- Coalesce discovery when opening a script requests both language service and docs.
+local discovering = {}
+local function discover(root, callback)
+  local key = project.key(root)
+  if discovering[key] then
+    table.insert(discovering[key], callback)
+    return
+  end
+  discovering[key] = { callback }
+  require("godot.discovery").find(root, function(found)
+    -- Managed sessions already have a record with the bridge port and process
+    -- start time. A partial discovery result must not shadow that record.
+    local unmanaged = {}
+    for _, s in ipairs(found) do
+      local managed = record(root, path(root, s.mode), s.mode)
+      if not managed or managed.pid ~= s.pid then
+        s.started_us = process.started_us(s.pid)
+        unmanaged[#unmanaged + 1] = s
+      end
+    end
+    observed[key] = unmanaged
+    local waiters = discovering[key]
+    discovering[key] = nil
+    for _, cb in ipairs(waiters) do cb(found) end
+  end, M.advertised_editor(root))
+end
+
+function M.find_editor(root, callback)
+  local current = candidates(root, "editor")[1]
+  if current then return callback(current) end
+  discover(root, function() callback(candidates(root, "editor")[1]) end)
+end
+
+-- Only launch paths supplied by OS discovery, our local state or the user.
+-- The add-on record in the project can identify a session but cannot nominate a binary.
+local function running_engine(root, mode)
+  local s = record(root, path(root, mode), mode)
+  if s and s.executable then return s.executable end
+  for _, instance in ipairs(observed[project.key(root)] or {}) do
+    if instance.mode == mode and process.matches(instance) then return instance.executable end
+  end
+end
+
+local function choose_engine(root, callback, cached_only)
+  local exe = running_engine(root, "editor") or running_engine(root, "headless")
+  if exe then return callback(nil, exe) end
+  require("godot.engine").resolve(root, callback, cached_only)
+end
+
+function M.engine(root, callback, cached_only)
+  if not root then return require("godot.engine").resolve(nil, callback, cached_only) end
+  if cached_only or running_engine(root, "editor") then return choose_engine(root, callback, cached_only) end
+  discover(root, function() choose_engine(root, callback) end)
+end
+
 function M.ensure(root, purpose, callback)
   if closing then return callback("Neovim is closing") end
+  require("godot.bridge").prepare(root)
   M.track(root)
   local key = project.key(root) .. "#" .. purpose
   if pending[key] then
@@ -135,7 +167,8 @@ function M.ensure(root, purpose, callback)
   pending[key] = { callback }
   local timeout = require("godot.config").options.startup_timeout
   local deadline = uv.now() + timeout
-  local spawned, discovery_grace
+  local spawned, discovery_grace, executable
+  local needs_engine = {}
   local function finish(err, s)
     local waiters = pending[key] or {}
     pending[key] = nil
@@ -151,7 +184,7 @@ function M.ensure(root, purpose, callback)
     end
     ports.owners(function(owners)
       if closing then return finish("Neovim is closing") end
-      local release = lock(root)
+      local release = project.lock(root, "session")
       if release then
         local ok, result = pcall(function()
           M.track(root)
@@ -159,6 +192,8 @@ function M.ensure(root, purpose, callback)
           for _, s in ipairs(list) do
             if ready(s, purpose, owners) then return s end
           end
+          -- The GUI already exists. Wait for its listeners instead of starting a second one.
+          if purpose == "editor" and #list > 0 then return end
           -- A manually opened GUI may still be importing assets. Give its
           -- unoccupied service port time to start before launching a helper.
           if discovery_grace and uv.now() < discovery_grace then
@@ -182,21 +217,31 @@ function M.ensure(root, purpose, callback)
             error(("Godot PID %d is still running for %s, but its %s service is unavailable. "
               .. "Close that editor and retry, or inspect :checkhealth godot."):format(prior.pid, root, purpose))
           end
-          if not spawned then spawned = launch(root, mode) end
+          if not executable then return needs_engine end
+          if not spawned then spawned = launch(root, mode, executable) end
         end)
         release()
         if not ok then return finish(tostring(result)) end
+        if result == needs_engine then
+          -- User input may take arbitrarily long. Resume outside the lock, then
+          -- check again for an editor opened while the picker was visible.
+          return choose_engine(root, function(err, exe)
+            if err then return finish(err) end
+            executable = exe
+            discover(root, function(found)
+              deadline = uv.now() + timeout
+              if #found > 0 then discovery_grace = uv.now() + 6000 end
+              poll()
+            end)
+          end)
+        end
         if result then return finish(nil, result) end
       end
       vim.defer_fn(poll, 200)
     end)
   end
-  if #candidates(root, purpose) == 0 then
-    require("godot.discovery").find(root, function(found)
-      for _, s in ipairs(found) do
-        s.started_us = process.started_us(s.pid)
-      end
-      observed[project.key(root)] = found
+  if #candidates(root, "editor") == 0 then
+    discover(root, function(found)
       if #found > 0 then discovery_grace = uv.now() + 6000 end
       poll()
     end)
@@ -208,9 +253,9 @@ end
 function M.release_all()
   closing = true
   for _, root in pairs(tracked) do
-    local release = lock(root)
+    local release = project.lock(root, "session")
     if not release then
-      vim.wait(500, function() release = lock(root); return release ~= nil end, 15)
+      vim.wait(500, function() release = project.lock(root, "session"); return release ~= nil end, 15)
     end
     project.untrack(root)
     if release then

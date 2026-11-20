@@ -20,6 +20,12 @@
 !/scripts/godot-nvim-open.lua
 !/scripts/resolve_uid.gd
 !/scripts/install-windows-font.ps1
+!/scripts/install-windows-tool.ps1
+!/scripts/dependencies-windows.json
+!/scripts/assets/
+!/scripts/assets/godot_resource.dll
+!/scripts/assets/godot_resource-LICENSE.txt
+!/scripts/assets/README.md
 
 !/fonts/
 !/fonts/GodotSceneIcons.ttf
@@ -29,5 +35,10 @@
 !/fonts/README.md
 
 !/tests/
+!/tests/engine.lua
+!/tests/feature_config.lua
+!/tests/feature_integration.lua
+!/tests/tools.lua
+!/tests/install-windows-tool.ps1
 !/tests/shader_compat.lua
 

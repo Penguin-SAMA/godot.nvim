@@ -1,0 +1,71 @@
+{
+  "packages": [
+    {
+      "id": "scene_tree",
+      "version": "0.7.0",
+      "bundled": "scripts/assets/godot_resource.dll",
+      "sha256": "c4a2ce7c24914594dd545fdf963ebbb95582df79c59f1bd307fc5b0775833fd7",
+      "format": "file",
+      "kind": "file",
+      "destination": "parser/godot_resource.dll",
+      "path": "parser/godot_resource.dll"
+    },
+    {
+      "id": "dap",
+      "version": "0.10.0-68-gcfa2d58",
+      "url": "https://codeload.github.com/mfussenegger/nvim-dap/zip/cfa2d58f4537aca6ca83e2de1a0d9f1491121264",
+      "sha256": "54c037a524c70b4cd70231f89829d7973d37dd89712c9ac96ee792ff9546203c",
+      "format": "zip",
+      "kind": "directory",
+      "source": "nvim-dap-cfa2d58f4537aca6ca83e2de1a0d9f1491121264",
+      "destination": "nvim-dap",
+      "path": "nvim-dap"
+    },
+    {
+      "id": "shader_lsp",
+      "version": "0.3.2",
+      "godotMin": "4.7.0",
+      "default": true,
+      "url": "https://github.com/Dead-Shrimp-Studio/gdshader-lsp-cpp/releases/download/v0.3.2/gdshader_lsp_release_windows.exe",
+      "sha256": "4940597cb2902b7322bf92e02be7950608b46949d796aa8b345535db12cb99e4",
+      "format": "file",
+      "kind": "file",
+      "destination": "bin/gdshader-lsp.exe",
+      "path": "bin/gdshader-lsp.exe"
+    },
+    {
+      "id": "shader_lsp",
+      "version": "0.2.6",
+      "godotMin": "4.5.0",
+      "godotMaxExclusive": "4.7.0",
+      "url": "https://github.com/Dead-Shrimp-Studio/gdshader-lsp-cpp/releases/download/v0.2.6/gdshader_lsp_release_windows.exe",
+      "sha256": "08b752c08db582f86c3bd7b02764e9094002613abf25f4752dd7e540dabbcd77",
+      "format": "file",
+      "kind": "file",
+      "destination": "bin/gdshader-lsp.exe",
+      "path": "bin/gdshader-lsp.exe"
+    },
+    {
+      "id": "gdscript_formatter",
+      "version": "0.28.0",
+      "url": "https://github.com/GDQuest/GDScript-formatter/releases/download/0.28.0/gdscript-formatter-0.28.0-windows-x86_64.exe.zip",
+      "sha256": "f4012ceb0ece52af7e0f617ceb267fee386512b51b0808f12743667b01ad7626",
+      "format": "zip",
+      "kind": "file",
+      "source": "gdscript-formatter-0.28.0-windows-x86_64.exe",
+      "destination": "bin/gdscript-formatter.exe",
+      "path": "bin/gdscript-formatter.exe"
+    },
+    {
+      "id": "clang_format",
+      "version": "23.1.5",
+      "url": "https://files.pythonhosted.org/packages/7b/67/b91fb3483ca5cdb468fa5e72d836736de5ec29154cc3f58718de6192bc12/clang_format-23.1.5-py2.py3-none-win_amd64.whl",
+      "sha256": "18a4a1a698dd52ed4e288c97d99e93910f8f9d0128b266f65021ecf39c85d034",
+      "format": "zip",
+      "kind": "file",
+      "source": "clang_format/data/bin/clang-format.exe",
+      "destination": "bin/clang-format.exe",
+      "path": "bin/clang-format.exe"
+    }
+  ]
+}

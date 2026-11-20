@@ -1,11 +1,25 @@
 local M = {}
 local project = require("godot.project")
 local output = require("godot.output")
+local features = require("godot.config")
 local adapter = "godot.nvim"
 local active = {}
+local registrations = {}
 
 local function warn(message)
   vim.notify("Godot: " .. message, vim.log.levels.WARN)
+end
+
+local function debugger()
+  if not features.require_feature("dap") then return end
+  local tool = require("godot.tools").status("dap")
+  if tool.state ~= "ready" then
+    warn(tool.message or "nvim-dap is being prepared. Retry the command when it is ready.")
+    return
+  end
+  local ok, dap = pcall(require, "dap")
+  if ok then return dap end
+  warn("Could not load nvim-dap: " .. tostring(dap))
 end
 
 local function scene_path(root, scene)
@@ -116,7 +130,12 @@ end
 
 local function configure(dap)
   if dap.adapters[adapter] then return end
-  dap.adapters[adapter] = function(connect, config)
+  local function register(target, callback)
+    target[adapter] = callback
+    registrations[target] = callback
+  end
+  register(dap.adapters, function(connect, config)
+    if not features.require_feature("dap") then return end
     local root = config.project
     if active[root] then
       warn("A game is starting or running in " .. root .. ". Stop it with :GodotStop.")
@@ -135,9 +154,9 @@ local function configure(dap)
       output.append(root, (config.noDebug and "Run " or "Debug ") .. config.scene)
       connect({ type = "server", id = "godot", host = "127.0.0.1", port = instance.dap_port })
     end)
-  end
+  end)
 
-  dap.listeners.on_session[adapter] = function(_, session)
+  register(dap.listeners.on_session, function(_, session)
     if not session or session.config.type ~= adapter then return end
     local root = session.config.project
     local entry = active[root]
@@ -160,26 +179,26 @@ local function configure(dap)
       end
       return send(self, local_breakpoints, done)
     end
-  end
+  end)
 
-  dap.listeners.before.launch[adapter] = function(session, err)
+  register(dap.listeners.before.launch, function(session, err)
     -- nvim-dap closes a failed launch in its response handler.
     if err and owned(session) then
       output.append(session.config.project, "Could not launch " .. session.config.scene .. ": " .. tostring(err))
     end
-  end
-  dap.listeners.after.launch[adapter] = function(session, err)
+  end)
+  register(dap.listeners.after.launch, function(session, err)
     local entry = owned(session)
     if not entry or err then return end
     entry.launched = true
     if entry.stopping then terminate(session) end
-  end
-  dap.listeners.after.event_output[adapter] = function(session, body)
+  end)
+  register(dap.listeners.after.event_output, function(session, body)
     if owned(session) and body.category ~= "telemetry" then
       output.append(session.config.project, body.output, body.source and body.source.path, body.line)
     end
-  end
-  dap.listeners.before.event_stopped[adapter] = function(session, body)
+  end)
+  register(dap.listeners.before.event_stopped, function(session, body)
     -- Godot also stops on script errors during a plain run. Leave the output
     -- window focused until the user chooses a source location.
     local entry = owned(session)
@@ -190,22 +209,22 @@ local function configure(dap)
     else
       entry.exception, entry.last_error = nil, nil
     end
-  end
+  end)
   local function resumed(session)
     local entry = owned(session)
     if entry then entry.exception, entry.last_error = nil, nil end
   end
-  dap.listeners.after.event_continued[adapter] = resumed
-  dap.listeners.after["continue"][adapter] = function(session, err) if not err then resumed(session) end end
-  dap.listeners.after["event_godot/custom_data"][adapter] = function(session, event)
+  register(dap.listeners.after.event_continued, resumed)
+  register(dap.listeners.after["continue"], function(session, err) if not err then resumed(session) end end)
+  register(dap.listeners.after["event_godot/custom_data"], function(session, event)
     local entry = owned(session)
     if entry and event.message == "error" then godot_error(session, entry, event.data) end
-  end
+  end)
 end
 
 function M.start(root, scene, debugging)
-  local ok, dap = pcall(require, "dap")
-  if not ok then return warn("Install nvim-dap to run or debug a scene.") end
+  local dap = debugger()
+  if not dap then return end
   root = project.normalize(root)
   local target, err = scene_path(root, scene)
   if not target then return warn(err) end
@@ -219,12 +238,14 @@ function M.start(root, scene, debugging)
     noDebug = not debugging,
     ["godot/custom_data"] = true,
   }
-  local function run() dap.run(config, { new = true, filetype = "gdscript" }) end
+  local function run()
+    if features.enabled("dap") then dap.run(config, { new = true, filetype = "gdscript" }) end
+  end
   local entry = active[root]
   if entry and entry.stopping then entry.restart = run else run() end
 end
 
-function M.stop(root)
+local function stop(root)
   root = project.normalize(root)
   local entry = active[root]
   if not entry then return warn("No game is running in " .. root) end
@@ -238,13 +259,18 @@ function M.stop(root)
   end
 end
 
+function M.stop(root)
+  if features.require_feature("dap") then stop(root) end
+end
+
 function M.output(root)
+  if not features.require_feature("dap") then return end
   return output.open(project.normalize(root))
 end
 
 function M.control(root, action)
-  local ok, dap = pcall(require, "dap")
-  if not ok then return warn("Install nvim-dap to use the debugger.") end
+  local dap = debugger()
+  if not dap then return end
   if action == "toggle_breakpoint" then return dap.toggle_breakpoint() end
   local entry = active[project.normalize(root)]
   local session = entry and entry.session
@@ -262,9 +288,20 @@ end
 function M.shutdown()
   for root, entry in pairs(active) do
     entry.restart = nil
-    M.stop(root)
+    stop(root)
   end
   if next(active) then vim.wait(2000, function() return next(active) == nil end, 20) end
+  -- A slow launch might still be waiting for its response when the feature is
+  -- turned off. Disconnect it before removing the normal launch listeners.
+  for _, entry in pairs(active) do
+    if entry.session and not entry.launched and not entry.session.closed then
+      entry.session:disconnect({ terminateDebuggee = true })
+    end
+  end
+  for target, callback in pairs(registrations) do
+    if target[adapter] == callback then target[adapter] = nil end
+  end
+  registrations = {}
 end
 
 return M

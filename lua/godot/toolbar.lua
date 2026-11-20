@@ -1,11 +1,11 @@
 local M = {}
 local api = vim.api
 local project = require("godot.project")
-local bridge = require("godot.bridge")
+local config = require("godot.config")
 local actions = { "main", "pause", "stop", "current", "custom" }
 local fallback = { "▶", "Ⅱ", "■", "▷", "…", "↻" }
 local busy = {}
-local root, key, winbar, right_area
+local root, key, winbar, area
 
 local function highlights()
   local dark = vim.o.background == "dark"
@@ -20,9 +20,9 @@ local function disabled(action, state)
 end
 
 function M.render()
-  if not root then return "" end
-  local state = bridge.run_state(key) or {}
-  local official = require("godot.config").options.scene_icons == "godot"
+  if not root or not config.enabled("bridge") then return "" end
+  local state = require("godot.bridge").run_state(key) or {}
+  local official = config.options.scene_icons == "godot"
   local parts = {}
   for i, action in ipairs(actions) do
     local index = state.mode == action and 6 or i -- The running scene's button becomes Reload.
@@ -35,9 +35,11 @@ function M.render()
 end
 
 function M.click(i, _, button)
+  if not config.enabled("bridge") then return end
   local target = require("godot").root()
   local action = actions[i]
   if button ~= "l" or not action or not target then return end
+  local bridge = require("godot.bridge")
   local target_key = project.key(target)
   if target_key ~= key or busy[key] or disabled(action, bridge.run_state(key) or {}) then return end
   local params = { action = action }
@@ -59,14 +61,15 @@ local function bufferline_visible()
   if not cfg or not cfg.options or not vim.o.tabline:find("bufferline", 1, true) then return false end
   local areas = cfg.options.custom_areas or {}
   cfg.options.custom_areas = areas
-  if not right_area or areas.right ~= right_area then
+  if not area or areas.right ~= area.render then
     local original = areas.right
-    right_area = function()
+    local function render()
       local items = original and vim.list_slice(original() or {}) or {}
       if root then items[#items + 1] = { text = M.render() } end
       return items
     end
-    areas.right = right_area
+    areas.right = render
+    area = { areas = areas, original = original, render = render }
   end
   return vim.o.showtabline == 2 or (vim.o.showtabline == 1 and #api.nvim_list_tabpages() > 1)
 end
@@ -85,7 +88,12 @@ local function top_window()
 end
 
 function M.refresh()
-  root = require("godot.config").options.toolbar ~= false and require("godot").root() or nil
+  local enabled = config.enabled("bridge") and config.options.toolbar ~= false
+  if not enabled and area then
+    if area.areas.right == area.render then area.areas.right = area.original end
+    area = nil
+  end
+  root = enabled and require("godot").root() or nil
   key = root and project.key(root)
   local win = root and not bufferline_visible() and top_window() or nil
   -- A new split inherits its parent's window-local winbar.

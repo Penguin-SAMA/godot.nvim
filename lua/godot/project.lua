@@ -45,6 +45,22 @@ function M.alive(pid)
   return type(pid) == "number" and pid > 0 and uv.kill(pid, 0) ~= nil
 end
 
+function M.lock(root, name)
+  local file = M.directory(root) .. "/" .. name .. ".lock"
+  local fd = uv.fs_open(file, "wx", 384)
+  if not fd then
+    local s = M.read(file)
+    local stat = uv.fs_stat(file)
+    if (s and not M.alive(s.pid)) or (not s and stat and os.time() - stat.mtime.sec > 5) then
+      uv.fs_unlink(file)
+    end
+    return
+  end
+  uv.fs_write(fd, vim.json.encode({ pid = uv.os_getpid() }), 0)
+  uv.fs_close(fd)
+  return function() uv.fs_unlink(file) end
+end
+
 -- Leases are per Neovim process. The external-editor helper uses the same
 -- records to route a file to an instance which already has this project open.
 local tracked = {}
