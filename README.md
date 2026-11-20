@@ -16,7 +16,6 @@ return {
     "Penguin-SAMA/godot.nvim",
     lazy = false,
     main = "godot",
-    dependencies = { "folke/which-key.nvim" },
     opts = {},
   },
 }
@@ -25,12 +24,14 @@ return {
 ## First use
 
 1. Open a `.gd` file in a project with a `project.godot` file at its root. The plugin connects to Godot’s language server on demand. Use `gd` to jump to a definition or `:checkhealth godot` to check the connection.
-2. With the `godot_resource` parser installed, open a `.tscn` or a script attached to a scene and press `<leader>Gso` to browse its nodes. Press `Enter` on a node to open its script.
+2. With the `godot_resource` parser installed, open a `.tscn` or a script attached to a scene and run `:GodotTree` to browse its nodes. Press `Enter` on a node to open its script.
 3. To edit nodes or use the five run buttons, run `:GodotBridgeInstall` once per project, then `:GodotOpen`. Restart that project’s Godot editor if it was already open.
 
 ## Shortcuts
 
-In Normal mode, press `<leader>G` (Space, then Shift+G in LazyVim). The keys below follow that prefix.
+With which-key.nvim v3, press `<leader>G` in Normal mode (Space, then Shift+G in LazyVim) to see the shortcuts available in the current buffer. The keys below follow that prefix.
+
+Commands such as `:GodotTree` and `:GodotRun main` work with or without which-key. Without which-key, `:GodotMenu` opens the built-in menu. If `<leader>G` is free, it opens that menu too.
 
 | Group | Keys |
 | --- | --- |

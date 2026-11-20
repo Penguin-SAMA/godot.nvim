@@ -16,7 +16,6 @@ return {
     "Penguin-SAMA/godot.nvim",
     lazy = false,
     main = "godot",
-    dependencies = { "folke/which-key.nvim" },
     opts = {},
   },
 }
@@ -25,12 +24,14 @@ return {
 ## 首次使用
 
 1. 打开含 `project.godot` 的项目中的 `.gd` 文件，插件会按需连接 Godot 语言服务。按 `gd` 跳到定义，用 `:checkhealth godot` 检查连接。
-2. 安装 `godot_resource` 解析器后，打开 `.tscn` 或已挂载到场景的脚本，按 `<leader>Gso` 浏览节点。在节点上按回车可打开它挂载的脚本。
+2. 安装 `godot_resource` 解析器后，打开 `.tscn` 或已挂载到场景的脚本，执行 `:GodotTree` 浏览节点。在节点上按回车可打开它挂载的脚本。
 3. 要编辑节点或使用右上角的五个运行按钮，在项目中执行一次 `:GodotBridgeInstall`，再执行 `:GodotOpen`。若该项目的 Godot 编辑器已打开，请重启它。
 
 ## 快捷键
 
-在普通模式按 `<leader>G`（LazyVim 默认为空格，再按 Shift+G），然后输入下表中的按键。
+装有 which-key.nvim v3 时，在普通模式按 `<leader>G`（LazyVim 默认为空格，再按 Shift+G），即可查看当前缓冲区可用的快捷键。下表列出的是此前缀之后的按键。
+
+无论是否安装 which-key，都可以直接执行 `:GodotTree`、`:GodotRun main` 等命令。未安装时，`:GodotMenu` 会打开内置菜单。如果 `<leader>G` 尚未绑定，也可以用它打开这个菜单。
 
 | 菜单分组 | 按键 |
 | --- | --- |
